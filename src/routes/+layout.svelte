@@ -47,6 +47,8 @@
 
 	import i18n, { initI18n, getLanguages, changeLanguage } from '$lib/i18n';
 
+	import '$lib/coach/init'; // [coach] boot coach stores + listeners after user loads
+
 	import '../tailwind.css';
 	import '../app.css';
 	import 'tippy.js/dist/tippy.css';

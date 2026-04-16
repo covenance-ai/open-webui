@@ -19,11 +19,12 @@ images:
   - $_IMAGE
 
 options:
-  # E2_HIGHCPU_8 (8 GB) OOMs on vite build; the upstream frontend build hits
-  # ~8 GB JS heap due to pyodide fetch + bundling. We need ≥16 GB. E2_HIGHCPU_32
-  # has region-specific quota that europe-west1 doesn't grant by default;
-  # N1_HIGHCPU_32 (32 vCPU, 28.8 GB) has wider quota and is equivalent for
-  # this workload.
-  machineType: N1_HIGHCPU_32
+  # E2_HIGHCPU_8 (8 GB) OOMs on vite build; ~8 GB JS heap is needed for
+  # pyodide fetch + SvelteKit bundling. E2_HIGHCPU_32 (32 GB) is the right
+  # size. europe-west1 Cloud Build doesn't grant default quota for it but
+  # submitting to the GLOBAL region (default when --region is omitted) gets
+  # access without a quota request. The image still lands in the
+  # europe-west1 AR repo we point gcloud run deploy at.
+  machineType: E2_HIGHCPU_32
 
 timeout: 1800s
