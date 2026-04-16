@@ -1,16 +1,23 @@
 """FastAPI router for /api/v1/coach/*."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import logging
 
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+
+from open_webui.coach import service as coach_service
 from open_webui.coach.schemas import (
     CoachConfigForm,
     CoachConfigResponse,
     CoachPolicyCreateForm,
     CoachPolicyResponse,
     CoachPolicyUpdateForm,
+    EvaluateRequest,
+    EvaluateResponse,
 )
 from open_webui.coach.storage import CoachConfigs, CoachPolicies
 from open_webui.utils.auth import get_admin_user, get_verified_user
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -118,3 +125,51 @@ async def unshare_policy(
     if updated is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Policy not found.')
     return updated
+
+
+# ─── Evaluate (hot path) ───────────────────────────────────────────────
+
+
+async def _call_coach_llm(request: Request, user, model_id: str, messages: list[dict]) -> str:
+    """In-process call to Open WebUI's chat completion surface.
+
+    We reuse ``utils.chat.generate_chat_completion`` so that provider auth,
+    model routing, and access-control live in one place. `stream=False` —
+    we want the full response synchronously.
+    """
+    from open_webui.utils.chat import generate_chat_completion
+
+    payload = {'model': model_id, 'messages': messages, 'stream': False}
+    result = await generate_chat_completion(request, payload, user, bypass_filter=True)
+    # OpenAI-compatible response shape.
+    try:
+        return result['choices'][0]['message']['content']
+    except (KeyError, IndexError, TypeError) as exc:
+        log.warning('coach: unexpected LLM response shape: %s', exc)
+        return ''
+
+
+@router.post('/evaluate', response_model=EvaluateResponse)
+async def evaluate(
+    request: Request,
+    body: EvaluateRequest,
+    user=Depends(get_verified_user),
+) -> EvaluateResponse:
+    """Run the coach against the given conversation.
+
+    The caller (frontend) is expected to send the last few turns; we
+    independently re-load the user's config + policies on the server (so
+    clients cannot pass arbitrary policy state). Returns a verdict; the
+    frontend is responsible for rendering the flag or submitting the
+    follow-up on action=followup.
+    """
+
+    async def caller(model_id: str, messages: list[dict]) -> str:
+        return await _call_coach_llm(request, user, model_id, messages)
+
+    return await coach_service.evaluate(
+        user_id=user.id,
+        user_role=user.role,
+        conversation=body.conversation,
+        llm_caller=caller,
+    )

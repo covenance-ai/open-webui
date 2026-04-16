@@ -44,3 +44,30 @@ class CoachPolicyCreateForm(BaseModel):
 class CoachPolicyUpdateForm(BaseModel):
     title: Optional[str] = Field(default=None, min_length=1, max_length=200)
     body: Optional[str] = Field(default=None, min_length=1, max_length=5000)
+
+
+# ─── Evaluate ──────────────────────────────────────────────────────────
+
+
+class ConversationTurn(BaseModel):
+    role: str  # 'user' | 'assistant' | 'system'
+    content: str
+    coach_authored: bool = False
+
+
+class EvaluateRequest(BaseModel):
+    chat_id: Optional[str] = None
+    message_id: Optional[str] = None
+    conversation: list[ConversationTurn]
+
+
+class EvaluateResponse(BaseModel):
+    """Coach verdict. One of three actions, with the optional payload for
+    `flag` and `followup`. `action=none` means nothing to do; frontend
+    renders nothing."""
+
+    action: str  # 'none' | 'flag' | 'followup'
+    policy_id: Optional[str] = None
+    severity: Optional[str] = None  # 'info' | 'warn' | 'critical'
+    rationale: Optional[str] = None
+    followup_text: Optional[str] = None

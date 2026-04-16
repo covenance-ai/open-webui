@@ -700,6 +700,18 @@
 		loading = true;
 		console.log('mounted');
 		window.addEventListener('message', onMessageHandler);
+		// [coach] auto-submit coach-authored user messages when the evaluator
+		// decides a follow-up would fix an assistant violation. submitPrompt is
+		// reused so the normal chat pipeline runs (history, socket, streaming).
+		const onCoachFollowup = (e) => {
+			const text = e?.detail?.text;
+			if (typeof text === 'string' && text.length > 0) {
+				submitPrompt(text);
+			}
+		};
+		window.addEventListener('coach:followup', onCoachFollowup);
+		onDestroy(() => window.removeEventListener('coach:followup', onCoachFollowup));
+
 		$socket?.on('events', chatEventHandler);
 
 		$audioQueue?.destroy();
@@ -1787,6 +1799,19 @@
 					}
 				})
 			);
+			// [coach] forward to window so $lib/coach/init.ts (outside this component)
+			// can evaluate the finished turn without us holding a reference to the coach module.
+			if (typeof window !== 'undefined') {
+				window.dispatchEvent(
+					new CustomEvent('coach:chat:finish', {
+						detail: {
+							chatId: $chatId,
+							messageId: message.id,
+							history
+						}
+					})
+				);
+			}
 
 			history.messages[message.id] = message;
 
