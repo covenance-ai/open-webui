@@ -107,6 +107,7 @@ from open_webui.routers import (
     automations,
     calendar,
 )
+from open_webui.coach.router import router as coach_router  # [coach]
 
 from open_webui.routers.retrieval import (
     get_embedding_function,
@@ -1443,6 +1444,7 @@ app.include_router(utils.router, prefix='/api/v1/utils', tags=['utils'])
 app.include_router(terminals.router, prefix='/api/v1/terminals', tags=['terminals'])
 app.include_router(automations.router, prefix='/api/v1/automations', tags=['automations'])
 app.include_router(calendar.router, prefix='/api/v1/calendars', tags=['calendars'])
+app.include_router(coach_router, prefix='/api/v1/coach', tags=['coach'])  # [coach]
 
 # SCIM 2.0 API for identity management
 if ENABLE_SCIM:
