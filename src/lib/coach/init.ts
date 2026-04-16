@@ -145,9 +145,24 @@ function wireEvaluator() {
 	window.addEventListener('coach:chat:finish', onChatFinish);
 }
 
+let overlayMounted = false;
+async function mountOverlay() {
+	if (overlayMounted || typeof window === 'undefined') return;
+	overlayMounted = true;
+	try {
+		const { mount } = await import('svelte');
+		const FlagOverlay = (await import('./overlay/FlagOverlay.svelte')).default;
+		mount(FlagOverlay, { target: document.body });
+	} catch (err) {
+		console.warn('[coach] overlay mount failed:', err);
+		overlayMounted = false;
+	}
+}
+
 // Wire up immediately (side-effect import time). bootstrap() kicks in as
 // soon as `user` becomes available.
 wireEvaluator();
+void mountOverlay();
 
 user.subscribe((u) => {
 	if (u) {

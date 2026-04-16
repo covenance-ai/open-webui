@@ -1,6 +1,8 @@
 """FastAPI router for /api/v1/coach/*."""
 
+import copy
 import logging
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
@@ -15,6 +17,7 @@ from open_webui.coach.schemas import (
     EvaluateResponse,
 )
 from open_webui.coach.storage import CoachConfigs, CoachPolicies
+from open_webui.models.chats import Chats
 from open_webui.utils.auth import get_admin_user, get_verified_user
 
 log = logging.getLogger(__name__)
@@ -149,6 +152,32 @@ async def _call_coach_llm(request: Request, user, model_id: str, messages: list[
         return ''
 
 
+def _persist_flag(chat_id: str, message_id: str, user_id: str, verdict: EvaluateResponse) -> None:
+    """Patch chat.chat.history.messages[message_id].coach with the flag details.
+
+    Silently no-ops if the chat / message cannot be found — this is a
+    post-hoc annotation and losing it on a race is acceptable.
+    """
+    chat = Chats.get_chat_by_id_and_user_id(chat_id, user_id)
+    if chat is None:
+        return
+    chat_json = copy.deepcopy(chat.chat) if chat.chat else {}
+    history = chat_json.setdefault('history', {})
+    messages = history.setdefault('messages', {})
+    if message_id not in messages:
+        # Message isn't in the saved chat yet (race between client save and
+        # evaluate). Skip persistence; the transient frontend store still
+        # shows the flag for this session.
+        return
+    messages[message_id]['coach'] = {
+        'severity': verdict.severity or 'warn',
+        'rationale': verdict.rationale,
+        'policy_id': verdict.policy_id,
+        'created_at': int(time.time()),
+    }
+    Chats.update_chat_by_id(chat_id, chat_json)
+
+
 @router.post('/evaluate', response_model=EvaluateResponse)
 async def evaluate(
     request: Request,
@@ -157,19 +186,27 @@ async def evaluate(
 ) -> EvaluateResponse:
     """Run the coach against the given conversation.
 
-    The caller (frontend) is expected to send the last few turns; we
-    independently re-load the user's config + policies on the server (so
-    clients cannot pass arbitrary policy state). Returns a verdict; the
-    frontend is responsible for rendering the flag or submitting the
-    follow-up on action=followup.
+    The caller (frontend) sends the last few turns; we independently
+    re-load the user's config + policies server-side so clients cannot
+    inject arbitrary policy state. On action=flag we persist the flag into
+    the chat's stored JSON so it survives reload; action=followup has no
+    backend side effect — the frontend replays it via submitPrompt.
     """
 
     async def caller(model_id: str, messages: list[dict]) -> str:
         return await _call_coach_llm(request, user, model_id, messages)
 
-    return await coach_service.evaluate(
+    verdict = await coach_service.evaluate(
         user_id=user.id,
         user_role=user.role,
         conversation=body.conversation,
         llm_caller=caller,
     )
+
+    if verdict.action == 'flag' and body.chat_id and body.message_id:
+        try:
+            _persist_flag(body.chat_id, body.message_id, user.id, verdict)
+        except Exception as exc:
+            log.warning('coach: persist_flag failed: %s', exc)
+
+    return verdict

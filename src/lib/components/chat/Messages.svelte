@@ -466,7 +466,14 @@
 						</Loader>
 					{/if}
 					<ul role="log" aria-live="polite" aria-relevant="additions" aria-atomic="false">
-						{#each messages as message, messageIdx (message.id)}
+						<!-- Top spacer: sum of cached heights for messages above visible range -->
+						{#if topSpacerHeight > 0}
+							<div style="height: {topSpacerHeight}px" aria-hidden="true" />
+						{/if}
+
+						{#each messages.slice(visibleStart, visibleEnd) as message, i (message.id)}
+							{@const messageIdx = visibleStart + i}
+							<li data-message-id={message.id} class="contents"> <!-- [coach] anchor for flag/badge overlays -->
 							<Message
 								{chatId}
 								bind:history
@@ -494,7 +501,13 @@
 								{editCodeBlock}
 								{topPadding}
 							/>
+							</li> <!-- [coach] -->
 						{/each}
+
+						<!-- Bottom spacer: sum of cached heights for messages below visible range -->
+						{#if bottomSpacerHeight > 0}
+							<div style="height: {bottomSpacerHeight}px" aria-hidden="true" />
+						{/if}
 					</ul>
 				</section>
 				<div class="pb-18" />
