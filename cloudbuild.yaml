@@ -20,8 +20,10 @@ images:
 
 options:
   # E2_HIGHCPU_8 (8 GB) OOMs on vite build; the upstream frontend build hits
-  # ~8 GB JS heap due to pyodide fetch + bundling. 32 GB gives comfortable
-  # headroom and halves wall-time too.
-  machineType: E2_HIGHCPU_32
+  # ~8 GB JS heap due to pyodide fetch + bundling. We need ≥16 GB. E2_HIGHCPU_32
+  # has region-specific quota that europe-west1 doesn't grant by default;
+  # N1_HIGHCPU_32 (32 vCPU, 28.8 GB) has wider quota and is equivalent for
+  # this workload.
+  machineType: N1_HIGHCPU_32
 
 timeout: 1800s

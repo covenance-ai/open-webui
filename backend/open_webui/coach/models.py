@@ -20,3 +20,21 @@ class CoachConfig(Base):
     active_policy_ids = Column(JSON, nullable=False, default=list)
     created_at = Column(BigInteger, nullable=False)
     updated_at = Column(BigInteger, nullable=False)
+
+
+class CoachPolicy(Base):
+    """A natural-language coach policy.
+
+    ``user_id`` IS NULL (and ``is_shared`` TRUE) → admin-published, visible
+    to everyone. Non-null ``user_id`` → personal policy owned by that user.
+    """
+
+    __tablename__ = 'coach_policy'
+
+    id = Column(Text, primary_key=True)
+    user_id = Column(Text, nullable=True, index=True)
+    is_shared = Column(Boolean, nullable=False, default=False, index=True)
+    title = Column(Text, nullable=False)
+    body = Column(Text, nullable=False)
+    created_at = Column(BigInteger, nullable=False)
+    updated_at = Column(BigInteger, nullable=False)
