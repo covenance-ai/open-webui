@@ -696,6 +696,22 @@
 		} catch {}
 	};
 
+	// [coach] Top-level declaration so Svelte 5's lifecycle rules accept it.
+	// Refers to submitPrompt by closure — submitPrompt is defined further down;
+	// by the time this listener fires (after mount + a user turn) the const is
+	// initialised.
+	const onCoachFollowup = (e: Event) => {
+		const text = (e as CustomEvent)?.detail?.text;
+		if (typeof text === 'string' && text.length > 0) {
+			submitPrompt(text);
+		}
+	};
+	onDestroy(() => {
+		if (typeof window !== 'undefined') {
+			window.removeEventListener('coach:followup', onCoachFollowup);
+		}
+	});
+
 	onMount(() => {
 		loading = true;
 		console.log('mounted');
@@ -703,14 +719,9 @@
 		// [coach] auto-submit coach-authored user messages when the evaluator
 		// decides a follow-up would fix an assistant violation. submitPrompt is
 		// reused so the normal chat pipeline runs (history, socket, streaming).
-		const onCoachFollowup = (e) => {
-			const text = e?.detail?.text;
-			if (typeof text === 'string' && text.length > 0) {
-				submitPrompt(text);
-			}
-		};
+		// Cleanup is attached via window.removeEventListener in the onDestroy
+		// block further down (Svelte 5 disallows onDestroy inside onMount).
 		window.addEventListener('coach:followup', onCoachFollowup);
-		onDestroy(() => window.removeEventListener('coach:followup', onCoachFollowup));
 
 		$socket?.on('events', chatEventHandler);
 
