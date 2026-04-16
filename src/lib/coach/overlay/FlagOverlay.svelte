@@ -4,6 +4,7 @@
 	// getBoundingClientRect + fixed positioning — we re-measure on every
 	// reactive store change, on window resize, and on document scroll.
 
+	import { get } from 'svelte/store';
 	import { onDestroy, onMount } from 'svelte';
 	import { coachFlags, type CoachFlag } from '../stores/flags';
 
@@ -14,9 +15,12 @@
 	let tick = 0;
 
 	// Re-measure every anchor. Cheap — handful of DOM calls per turn.
+	// Uses get(coachFlags) rather than $coachFlags because Svelte 5 disallows
+	// store auto-subscription inside nested function scopes.
 	function remeasure() {
 		const next: Record<string, DOMRect | null> = {};
-		for (const id of Object.keys($coachFlags)) {
+		const flags = get(coachFlags);
+		for (const id of Object.keys(flags)) {
 			const el = document.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
 			next[id] = el ? (el as HTMLElement).getBoundingClientRect() : null;
 		}
