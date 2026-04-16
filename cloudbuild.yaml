@@ -1,0 +1,24 @@
+# Cloud Build spec for our fork. Used by our_webui/deploy.sh.
+#
+# Why a custom config (vs `gcloud builds submit --tag`): the upstream
+# Dockerfile uses BuildKit features ($BUILDPLATFORM), which the classic
+# Cloud Build Docker builder does not populate. Enabling DOCKER_BUILDKIT=1
+# on the docker step is enough to make it work.
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    env:
+      - DOCKER_BUILDKIT=1
+    args:
+      - build
+      - -t
+      - $_IMAGE
+      - .
+
+images:
+  - $_IMAGE
+
+options:
+  machineType: E2_HIGHCPU_8
+
+timeout: 1800s
