@@ -1801,11 +1801,13 @@
 			);
 			// [coach] forward to window so $lib/coach/init.ts (outside this component)
 			// can evaluate the finished turn without us holding a reference to the coach module.
+			// Note: use get(chatId) not $chatId — Svelte 5 refuses store auto-subscription
+			// this deep inside a nested async callback.
 			if (typeof window !== 'undefined') {
 				window.dispatchEvent(
 					new CustomEvent('coach:chat:finish', {
 						detail: {
-							chatId: $chatId,
+							chatId: get(chatId),
 							messageId: message.id,
 							history
 						}
