@@ -1,0 +1,118 @@
+# Coach module
+
+A fork-owned feature that pairs every chat with a second LLM — the **coach** —
+which watches the conversation, evaluates it against user-configured
+**policies**, and either auto-sends a user-style follow-up to nudge the main
+assistant, or attaches a non-blocking flag to the assistant message.
+
+This document is the orientation map. See `COACH_INJECTIONS.md` for the exact
+list of upstream files we touch.
+
+## Why this fork
+
+All coach logic lives in two isolated subtrees:
+
+- `backend/open_webui/coach/` — FastAPI router, SQLAlchemy models, evaluation
+  service, prompts.
+- `src/lib/coach/` — Svelte UI, stores, fetch wrappers, overlay renderers.
+
+Plus one peewee migration at `backend/open_webui/internal/migrations/019_add_coach_tables.py`
+(auto-discovered by the upstream migration runner — no registration needed).
+
+Everything else is **upstream code**. We touch it only at a small number of
+injection points, each listed in `COACH_INJECTIONS.md` with before/after
+snippets and grep anchors.
+
+## Data model
+
+Two new tables:
+
+- `coach_policy` — a natural-language rule. `user_id=NULL, is_shared=true`
+  means admin-published (visible to everyone); otherwise it's personal to one
+  user.
+- `coach_config` — one row per user: `enabled`, `coach_model_id`,
+  `active_policy_ids` (a JSON list of policy ids the user has switched on).
+
+Flags and coach-authored user messages are **embedded** in the existing
+`chat.chat` JSON — no third table. See `service.py` for the schema we store
+at `chat.history.messages[<id>].coach`.
+
+## Evaluation flow
+
+```
+assistant stream finishes in Chat.svelte
+   → window dispatch `coach:chat:finish` with chat_id + message_id
+   → src/lib/coach/init.ts handler
+     → POST /api/v1/coach/evaluate { chat_id, message_id, conversation }
+   → backend/open_webui/coach/service.py
+     - loads user's CoachConfig + active policies
+     - builds one coach-LLM call, all policies concatenated
+     - parses JSON verdict: { action: none|flag|followup, ... }
+     - action=flag     → persists the flag in chat.chat JSON
+     - action=followup → returns verdict; frontend injects the follow-up
+   → init.ts
+     - flag     → re-renders via FlagOverlay (MutationObserver on [data-message-id])
+     - followup → dispatches `coach:followup`; Chat.svelte submits it
+```
+
+Infinite-loop protection: if the preceding user message is already
+`coach_authored=true`, service.py downgrades any `followup` verdict to `flag`.
+Max chain length 1 (configurable later).
+
+## Local dev
+
+See `README.md` for upstream dev instructions. Coach-specific notes:
+
+- Run `scripts/check_injections.sh` after every rebase — see below.
+- Backend tests live in `backend/open_webui/coach/tests/`:
+  `cd backend && uv run pytest open_webui/coach/tests -q`.
+- Frontend tests live beside each module: `npm run test:frontend -- --run src/lib/coach`.
+- End-to-end test: `npx cypress run --spec cypress/e2e/coach.cy.ts`.
+
+## Rebase procedure
+
+```
+cd our_webui/open-webui
+git fetch upstream
+git checkout coach
+git rebase upstream/main                   # conflicts surface at injection sites
+
+# After conflicts resolved:
+bash scripts/check_injections.sh           # every anchor must pass
+cd backend && uv run pytest open_webui/coach/tests -q
+cd .. && npm install && npm run test:frontend -- --run src/lib/coach
+
+# Sanity: migration on fresh SQLite
+rm -f /tmp/coach-rebase.db
+DATABASE_URL=sqlite:////tmp/coach-rebase.db \
+  uv run python -c "from open_webui.internal import db; print('migrations ok')"
+
+git push --force-with-lease origin coach
+```
+
+If `check_injections.sh` fails, the named site needs re-applying. Consult
+`COACH_INJECTIONS.md` for the before/after snippet.
+
+Common rebase scenarios:
+
+- **Upstream renames `chat:finish` → `chat:complete`** — our Chat.svelte hunk
+  conflicts. Rename in the injection; update `COACH_INJECTIONS.md`.
+- **Upstream removes the sticky UserMenu region in Sidebar.svelte** — our
+  sidebar anchor is gone. Pick a new anchor, update the injection manifest.
+- **Upstream changes `chat.history.messages[id]` shape** — we use our own key
+  (`.coach`) so additive changes don't break us; structural changes do.
+  Integration tests catch this.
+
+## FAQ
+
+**What coach model should I pick?** Anything in the configured allowlist. For
+cost-sensitive deployments, pick a small fast model (e.g. a sonnet- or mini-
+class model). For high-stakes compliance, pick the strongest one available.
+
+**Why can't I see my policies for other users?** Personal policies are owned
+by a user and invisible to others. If you want a policy to apply team-wide,
+promote it to shared via the admin menu (requires admin role).
+
+**Will coach send an infinite chain of follow-ups?** No. Loop protection in
+`service.py` forces `flag` (or `none`) if the immediately-preceding user
+message is already coach-authored.
