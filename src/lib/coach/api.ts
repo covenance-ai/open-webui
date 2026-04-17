@@ -6,9 +6,11 @@ import type {
 	CoachConfig,
 	CoachConfigForm,
 	CoachEvent,
+	CoachEventDetail,
 	CoachPolicy,
 	CoachPolicyCreateForm,
-	CoachPolicyUpdateForm
+	CoachPolicyUpdateForm,
+	DryRunRequest
 } from './types';
 
 const BASE = `${WEBUI_API_BASE_URL}/coach`;
@@ -92,4 +94,17 @@ export const clearCoachEvents = (token: string) =>
 	fetchJson<{ cleared: number }>(`${BASE}/events`, {
 		method: 'DELETE',
 		headers: authHeaders(token)
+	});
+
+export const getCoachEventDetail = (token: string, eventId: string) =>
+	fetchJson<CoachEventDetail>(`${BASE}/events/${encodeURIComponent(eventId)}`, {
+		method: 'GET',
+		headers: authHeaders(token)
+	});
+
+export const dryRunCoach = (token: string, body: DryRunRequest) =>
+	fetchJson<CoachEventDetail>(`${BASE}/dry-run`, {
+		method: 'POST',
+		headers: authHeaders(token),
+		body: JSON.stringify(body)
 	});

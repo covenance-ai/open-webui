@@ -139,21 +139,55 @@ Demo mode needs no `coach_model_id` or active policies — useful to rehearse
 UX without provider setup. Loop protection (service.py) still applies: a
 preceding coach-authored user turn downgrades any demo followup to a flag.
 
-## Activity log
+## Activity log + event inspector
 
-Every call into `evaluate` records one event in the in-memory ring buffer
-at `coach.events` (per user, capped at 100, newest-first). The CoachPanel
-renders the most recent ones under **Activity**: status (ok / error /
-skipped / demo), action, model, tokens in/out (from the provider's
-OpenAI-compatible `usage` field), duration, and any exception.
+Every call into `evaluate` records two entries in-memory:
+- **headline row** (per-user ring, cap 100) — status, action, model,
+  tokens in/out from the OpenAI-compatible `usage` field, duration,
+  policy count, any exception.
+- **detail blob** (per-user ring, cap 30 — heavier) — rendered prompt,
+  raw LLM reply, parsed verdict, active policies snapshot, conversation
+  the coach saw.
+
+The CoachPanel renders the headline strip under **Activity**; each row
+has an **inspect** button that fetches the detail blob and opens a
+modal. That's the "why did the coach do X" view — prompt and reply
+side-by-side with the parsed verdict.
+
+On every evaluate we also emit a structured JSON `log.info` line with
+event_id, status, action, tokens, duration, demo flag, skip reason,
+error. Cloud Logging auto-parses JSON payloads, so in the GCP log
+explorer filter by `jsonPayload.event="coach.evaluate"` and slice by
+any field.
 
 API:
-- `GET /api/v1/coach/events?limit=50` — list.
-- `DELETE /api/v1/coach/events` — wipe (useful before a demo run).
+- `GET  /api/v1/coach/events?limit=50` — headline list, newest first.
+- `GET  /api/v1/coach/events/{id}`     — detail blob for one event.
+- `DELETE /api/v1/coach/events`        — wipe both rings (useful before a demo).
 
-The log resets on container restart. Scaling past one Cloud Run instance
-would split the buffer across replicas — fine for diagnostics, not for
-audit (persist to a DB at that point).
+Both rings reset on container restart. Scaling past one Cloud Run
+instance would split the buffer across replicas — fine for diagnostics,
+not for audit (persist to a DB at that point).
+
+## Playground (dry-run)
+
+`POST /api/v1/coach/dry-run` evaluates a hypothetical transcript without
+touching a chat, without recording an event, without writing a log. Body:
+
+```json
+{
+  "conversation": [{"role":"user","content":"..."}, ...],
+  "policy_ids":   ["abc", "def"],    // null → caller's active set
+  "coach_model_id": "gpt-5.4-mini",  // null → caller's saved model
+  "demo_mode":   false,              // null → caller's demo flag
+  "enabled":     true                // null → caller's enabled flag
+}
+```
+
+Response is the same shape as `GET /events/{id}` so the frontend renders
+it with one component. Use it to iterate on policy wording, compare
+candidate coach models, or rehearse a demo — the CoachPanel opens it
+under **▶ Playground (dry-run)** with a two-field transcript composer.
 
 ## FAQ
 

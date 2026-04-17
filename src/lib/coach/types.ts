@@ -60,3 +60,49 @@ export interface CoachEvent {
 	chat_id: string | null;
 	message_id: string | null;
 }
+
+export interface CoachPolicySnapshot {
+	id: string;
+	title: string;
+	body: string;
+	is_shared: boolean;
+}
+
+export interface CoachRenderedMessage {
+	role: string;
+	content: string;
+}
+
+export interface CoachConversationTurn {
+	role: string;
+	content: string;
+	coach_authored: boolean;
+}
+
+export interface CoachEventDetail {
+	id: string;
+	user_id: string | null;
+	ts_ms: number;
+	status: CoachEventStatus;
+	action: string | null;
+	reason: string | null;
+	model_id: string | null;
+	duration_ms: number;
+	tokens_in: number | null;
+	tokens_out: number | null;
+	error: string | null;
+	demo: boolean;
+	rendered_prompt: CoachRenderedMessage[];
+	raw_reply: string | null;
+	verdict: Record<string, unknown>;
+	active_policies: CoachPolicySnapshot[];
+	conversation: CoachConversationTurn[];
+}
+
+export interface DryRunRequest {
+	conversation: CoachConversationTurn[];
+	policy_ids?: string[] | null;
+	coach_model_id?: string | null;
+	demo_mode?: boolean | null;
+	enabled?: boolean | null;
+}

@@ -75,6 +75,56 @@ class EvaluateResponse(BaseModel):
     followup_text: Optional[str] = None
 
 
+class CoachPolicySnapshot(BaseModel):
+    """Minimal policy view embedded in event details."""
+
+    id: str
+    title: str
+    body: str
+    is_shared: bool = False
+
+
+class CoachEventDetailResponse(BaseModel):
+    """Full payload for one evaluation — everything the coach saw + produced.
+
+    Powers the activity detail drawer and the /dry-run endpoint.
+    """
+
+    id: str
+    user_id: Optional[str] = None
+    ts_ms: int
+    status: str  # 'ok' | 'error' | 'skipped' | 'demo'
+    action: Optional[str] = None
+    reason: Optional[str] = None
+    model_id: Optional[str] = None
+    duration_ms: int
+    tokens_in: Optional[int] = None
+    tokens_out: Optional[int] = None
+    error: Optional[str] = None
+    demo: bool = False
+
+    rendered_prompt: list[dict]
+    raw_reply: Optional[str] = None
+    verdict: dict
+    active_policies: list[CoachPolicySnapshot]
+    conversation: list[dict]
+
+
+class DryRunRequest(BaseModel):
+    """Evaluate a hypothetical transcript without persisting anything.
+
+    All overrides are optional; None falls back to the caller's stored
+    config. policy_ids=[] forces an empty active set (useful for "what
+    if the user had no policies?" sanity checks).
+    """
+
+    conversation: list[ConversationTurn]
+    policy_ids: Optional[list[str]] = None
+    coach_model_id: Optional[str] = None
+    demo_mode: Optional[bool] = None
+    enabled: Optional[bool] = None  # override the on/off switch for one-off runs
+
+
 class CoachEventResponse(BaseModel):
     """One row of the evaluation activity log (see coach.events)."""
 

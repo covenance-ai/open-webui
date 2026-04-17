@@ -22,6 +22,7 @@ import time
 import uuid
 
 _PER_USER_LIMIT = 100
+_DETAIL_PER_USER_LIMIT = 30  # Details carry prompt + reply — heavier.
 
 
 @dataclass
@@ -42,7 +43,29 @@ class CoachEvent:
     message_id: Optional[str] = None
 
 
+@dataclass
+class CoachEventDetail:
+    """Full per-event payload: prompt, raw reply, verdict, policies.
+
+    Separate from CoachEvent so the headline ring stays light (for the
+    activity strip) while the detail ring, which is bigger and less
+    frequently viewed, caps at a smaller size.
+    """
+
+    id: str
+    ts_ms: int
+    rendered_prompt: list[dict]  # [{role, content}] — exactly what we sent
+    raw_reply: Optional[str]  # LLM's unparsed output; None if LLM not called
+    verdict: dict  # final EvaluateResponse as dict
+    active_policies: list[dict]  # [{id, title, body, is_shared}]
+    conversation: list[dict]  # [{role, content, coach_authored}] as supplied
+
+
 _buffers: dict[str, Deque[CoachEvent]] = defaultdict(lambda: deque(maxlen=_PER_USER_LIMIT))
+_details: dict[str, dict[str, CoachEventDetail]] = defaultdict(dict)
+_detail_order: dict[str, Deque[str]] = defaultdict(
+    lambda: deque(maxlen=_DETAIL_PER_USER_LIMIT)
+)
 _lock = RLock()
 
 
@@ -96,12 +119,54 @@ def list_for_user(user_id: str, limit: int = 50) -> list[CoachEvent]:
 def clear_for_user(user_id: str) -> int:
     with _lock:
         buf = _buffers.get(user_id)
-        if not buf:
-            return 0
-        n = len(buf)
-        buf.clear()
+        n = len(buf) if buf else 0
+        if buf:
+            buf.clear()
+        _details.pop(user_id, None)
+        _detail_order.pop(user_id, None)
         return n
+
+
+def record_detail(
+    *,
+    user_id: str,
+    event_id: str,
+    rendered_prompt: list[dict],
+    raw_reply: Optional[str],
+    verdict: dict,
+    active_policies: list[dict],
+    conversation: list[dict],
+) -> CoachEventDetail:
+    """Stash the full per-event payload, evicting the oldest detail for
+    this user when we exceed the cap. Indexed by event_id so GET
+    /events/{id}/detail can O(1) lookup."""
+    detail = CoachEventDetail(
+        id=event_id,
+        ts_ms=int(time.time() * 1000),
+        rendered_prompt=rendered_prompt,
+        raw_reply=raw_reply,
+        verdict=verdict,
+        active_policies=active_policies,
+        conversation=conversation,
+    )
+    with _lock:
+        order = _detail_order[user_id]
+        if len(order) >= order.maxlen:
+            evicted = order[0]  # deque will drop this when we append below
+            _details[user_id].pop(evicted, None)
+        order.append(event_id)
+        _details[user_id][event_id] = detail
+    return detail
+
+
+def get_detail(user_id: str, event_id: str) -> Optional[CoachEventDetail]:
+    with _lock:
+        return _details.get(user_id, {}).get(event_id)
 
 
 def to_dict(evt: CoachEvent) -> dict:
     return asdict(evt)
+
+
+def detail_to_dict(d: CoachEventDetail) -> dict:
+    return asdict(d)

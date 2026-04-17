@@ -296,6 +296,144 @@ def test_events_ring_buffer_is_per_user_and_newest_first():
     assert b[0].duration_ms == 99
 
 
+def test_detail_ring_records_and_retrieves():
+    from open_webui.coach import events
+
+    d = events.record_detail(
+        user_id='u1',
+        event_id='evt-1',
+        rendered_prompt=[{'role': 'system', 'content': 'sys'}],
+        raw_reply='{"action":"none"}',
+        verdict={'action': 'none'},
+        active_policies=[{'id': 'p1', 'title': 't', 'body': 'b', 'is_shared': False}],
+        conversation=[{'role': 'user', 'content': 'hi', 'coach_authored': False}],
+    )
+    assert d.id == 'evt-1'
+
+    got = events.get_detail('u1', 'evt-1')
+    assert got is not None
+    assert got.raw_reply == '{"action":"none"}'
+    assert got.active_policies[0]['id'] == 'p1'
+
+    # Wrong user shouldn't see another's detail.
+    assert events.get_detail('u2', 'evt-1') is None
+
+
+def test_detail_ring_evicts_oldest():
+    from open_webui.coach import events
+
+    cap = events._DETAIL_PER_USER_LIMIT
+    for i in range(cap + 5):
+        events.record_detail(
+            user_id='u1', event_id=f'e{i}',
+            rendered_prompt=[], raw_reply=None, verdict={}, active_policies=[],
+            conversation=[],
+        )
+    # Oldest five should be gone.
+    assert events.get_detail('u1', 'e0') is None
+    assert events.get_detail('u1', 'e4') is None
+    assert events.get_detail('u1', f'e{cap + 4}') is not None
+
+
+def test_clear_events_drops_details_too():
+    from open_webui.coach import events
+
+    events.record(
+        user_id='u1', status='ok', action='none', reason=None, model_id=None,
+        policy_count=0, duration_ms=1, tokens_in=None, tokens_out=None, error=None,
+    )
+    events.record_detail(
+        user_id='u1', event_id='x',
+        rendered_prompt=[], raw_reply=None, verdict={}, active_policies=[],
+        conversation=[],
+    )
+    events.clear_for_user('u1')
+    assert events.list_for_user('u1') == []
+    assert events.get_detail('u1', 'x') is None
+
+
+# ─── run_core (dry-run path) ──────────────────────────────────────────
+
+
+def test_run_core_captures_prompt_and_reply_in_trace():
+    """run_core is the pure, DB-less evaluation path used by /dry-run."""
+    from open_webui.coach.schemas import (
+        ConversationTurn,
+        CoachPolicyResponse,
+    )
+    from open_webui.coach.service import EvalTrace, run_core
+
+    policies = [
+        CoachPolicyResponse(
+            id='p1', user_id='u1', is_shared=False,
+            title='No medical advice', body='do not diagnose',
+            created_at=0, updated_at=0,
+        ),
+    ]
+    captured: list[EvalTrace] = []
+
+    async def caller(_m, _msgs):
+        return '{"action":"flag","rationale":"v","policy_id":"p1","severity":"warn"}'
+
+    r = _run(run_core(
+        user_id='u1', enabled=True, demo_mode=False,
+        coach_model_id='mock', policies=policies,
+        conversation=[
+            ConversationTurn(role='user', content='diagnose me'),
+            ConversationTurn(role='assistant', content='ok'),
+        ],
+        llm_caller=caller,
+        event_sink=lambda t: captured.append(t),
+    ))
+    assert r.action == 'flag'
+
+    trace = captured[0]
+    assert trace.llm_called is True
+    assert trace.model_id == 'mock'
+    assert len(trace.rendered_prompt) == 2
+    assert trace.raw_reply and 'flag' in trace.raw_reply
+    assert trace.verdict_dict['action'] == 'flag'
+    assert len(trace.active_policies) == 1
+    assert trace.active_policies[0]['id'] == 'p1'
+    assert len(trace.conversation) == 2
+    assert trace.conversation[0]['content'] == 'diagnose me'
+
+
+def test_run_core_respects_overrides_without_storage():
+    """run_core uses only its arguments — no CoachConfig DB read.
+
+    Verified by passing an enabled=False override while storage has
+    enabled=True; run_core must honour the arg, not the stored row.
+    """
+    from open_webui.coach.schemas import (
+        CoachConfigForm,
+        CoachPolicyCreateForm,
+        ConversationTurn,
+    )
+    from open_webui.coach.service import EvalTrace, run_core
+    from open_webui.coach.storage import CoachConfigs, CoachPolicies
+
+    p = CoachPolicies.create_personal('u1', CoachPolicyCreateForm(title='t', body='b'))
+    CoachConfigs.upsert(
+        'u1',
+        CoachConfigForm(enabled=True, coach_model_id='real', active_policy_ids=[p.id]),
+    )
+    captured: list[EvalTrace] = []
+
+    async def caller(_m, _msgs):
+        raise AssertionError('must not call LLM when enabled=False override')
+
+    r = _run(run_core(
+        user_id='u1', enabled=False, demo_mode=False,  # <- override
+        coach_model_id='real', policies=[],
+        conversation=[ConversationTurn(role='assistant', content='x')],
+        llm_caller=caller,
+        event_sink=lambda t: captured.append(t),
+    ))
+    assert r.action == 'none'
+    assert captured[0].skip_reason == 'disabled'
+
+
 def test_events_ring_buffer_cap():
     from open_webui.coach import events
 

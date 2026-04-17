@@ -3,13 +3,21 @@
 	import { toast } from 'svelte-sonner';
 
 	import { models, user } from '$lib/stores';
+	import Modal from '$lib/components/common/Modal.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
 	import * as api from '../api';
 	import { coachConfig } from '../stores/config';
 	import { coachEvents, refreshCoachEvents } from '../stores/events';
 	import { coachPolicies, personalPolicies, sharedPolicies } from '../stores/policies';
-	import type { CoachConfigForm, CoachEvent, CoachPolicy } from '../types';
+	import type {
+		CoachConfigForm,
+		CoachEvent,
+		CoachEventDetail,
+		CoachPolicy
+	} from '../types';
 
+	import CoachInspector from './CoachInspector.svelte';
+	import CoachPlayground from './CoachPlayground.svelte';
 	import PolicyEditor from './PolicyEditor.svelte';
 	import PolicyList from './PolicyList.svelte';
 
@@ -75,6 +83,27 @@
 			coachEvents.set([]);
 		} catch (err) {
 			toast.error(`Coach: ${(err as Error).message}`);
+		}
+	}
+
+	// ─── Inspector + Playground modals ────────────────────────────────
+	let inspectorOpen = false;
+	let inspectorDetail: CoachEventDetail | null = null;
+	let inspectorLoading = false;
+	let playgroundOpen = false;
+
+	async function openInspector(eventId: string) {
+		if (!token) return;
+		inspectorOpen = true;
+		inspectorDetail = null;
+		inspectorLoading = true;
+		try {
+			inspectorDetail = await api.getCoachEventDetail(token, eventId);
+		} catch (err) {
+			toast.error(`Coach: ${(err as Error).message}`);
+			inspectorOpen = false;
+		} finally {
+			inspectorLoading = false;
 		}
 	}
 
@@ -271,6 +300,15 @@
 				{/if}
 			</div>
 
+			<!-- Playground trigger -->
+			<button
+				type="button"
+				class="self-start text-xs px-2 py-1 rounded-md border border-dashed border-gray-300 dark:border-gray-600 hover:border-emerald-500 hover:text-emerald-600 dark:hover:text-emerald-400"
+				on:click={() => (playgroundOpen = true)}
+			>
+				▶ Playground (dry-run)
+			</button>
+
 			<!-- Activity log: per-user in-memory ring from /api/v1/coach/events -->
 			<div class="mt-1">
 				<div class="flex items-center justify-between text-gray-500 dark:text-gray-400 mb-0.5">
@@ -323,6 +361,14 @@
 										<span class="font-semibold {statusClass(evt.status)}">{evt.status}</span>
 										<span class="text-gray-600 dark:text-gray-300">{evt.action ?? '—'}</span>
 										<span class="ml-auto text-gray-400 dark:text-gray-500">{evt.duration_ms}ms</span>
+										<button
+											type="button"
+											class="text-[10px] px-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400"
+											on:click={() => openInspector(evt.id)}
+											title="Inspect: prompt, raw reply, verdict"
+										>
+											inspect
+										</button>
 									</div>
 									<div class="flex flex-wrap gap-x-2 text-gray-500 dark:text-gray-400">
 										{#if evt.model_id}<span>model={evt.model_id}</span>{/if}
@@ -348,3 +394,32 @@
 </div>
 
 <PolicyEditor bind:show={editorOpen} policy={editorPolicy} on:save={onEditorSave} on:close={() => (editorOpen = false)} />
+
+<!-- Event inspector: loads GET /events/{id} on open. -->
+<Modal bind:show={inspectorOpen} size="lg">
+	<div class="flex flex-col gap-3 p-5">
+		<header class="flex items-center justify-between">
+			<h2 class="text-base font-semibold text-gray-800 dark:text-gray-100">Coach event</h2>
+			<button
+				type="button"
+				class="text-xs text-gray-500 hover:text-gray-900 dark:hover:text-gray-100"
+				on:click={() => (inspectorOpen = false)}
+				aria-label="Close"
+			>
+				✕
+			</button>
+		</header>
+		{#if inspectorLoading}
+			<div class="text-sm text-gray-500 dark:text-gray-400 italic">Loading…</div>
+		{:else if inspectorDetail}
+			<CoachInspector detail={inspectorDetail} />
+		{/if}
+	</div>
+</Modal>
+
+<!-- Dry-run playground. -->
+<Modal bind:show={playgroundOpen} size="xl">
+	<div class="p-5">
+		<CoachPlayground on:close={() => (playgroundOpen = false)} />
+	</div>
+</Modal>
