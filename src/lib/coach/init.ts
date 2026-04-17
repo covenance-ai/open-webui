@@ -15,6 +15,7 @@ import { get } from 'svelte/store';
 import { user } from '$lib/stores';
 import * as api from './api';
 import { coachConfig } from './stores/config';
+import { refreshCoachEvents } from './stores/events';
 import { coachFlags, setFlag } from './stores/flags';
 import { coachPolicies } from './stores/policies';
 
@@ -35,6 +36,7 @@ async function bootstrap() {
 		const [cfg, pols] = await Promise.all([api.getCoachConfig(token), api.listCoachPolicies(token)]);
 		coachConfig.set(cfg);
 		coachPolicies.set(pols);
+		void refreshCoachEvents(token);
 	} catch (err) {
 		console.warn('[coach] bootstrap failed:', err);
 		bootstrapped = false;
@@ -84,7 +86,12 @@ async function onChatFinish(e: Event) {
 	const token = getToken();
 	if (!token) return;
 	const cfg = get(coachConfig);
-	if (!cfg?.enabled || !cfg?.coach_model_id || (cfg.active_policy_ids?.length ?? 0) === 0) {
+	// Gate: coach must be enabled, and either demo_mode on (scripted verdicts,
+	// no model/policy needed) or the real path fully configured.
+	const realPathReady = Boolean(
+		cfg?.coach_model_id && (cfg?.active_policy_ids?.length ?? 0) > 0
+	);
+	if (!cfg?.enabled || (!cfg.demo_mode && !realPathReady)) {
 		return;
 	}
 
@@ -113,6 +120,10 @@ async function onChatFinish(e: Event) {
 	} catch (err) {
 		console.warn('[coach] evaluate failed:', err);
 		return;
+	} finally {
+		// Refresh the activity log regardless of verdict — error rows are the
+		// whole point of the strip.
+		void refreshCoachEvents(token);
 	}
 
 	if (!verdict || verdict.action === 'none') return;

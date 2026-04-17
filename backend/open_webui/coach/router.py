@@ -6,10 +6,12 @@ import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from open_webui.coach import events as coach_events
 from open_webui.coach import service as coach_service
 from open_webui.coach.schemas import (
     CoachConfigForm,
     CoachConfigResponse,
+    CoachEventResponse,
     CoachPolicyCreateForm,
     CoachPolicyResponse,
     CoachPolicyUpdateForm,
@@ -133,23 +135,41 @@ async def unshare_policy(
 # ─── Evaluate (hot path) ───────────────────────────────────────────────
 
 
-async def _call_coach_llm(request: Request, user, model_id: str, messages: list[dict]) -> str:
+async def _call_coach_llm(
+    request: Request, user, model_id: str, messages: list[dict]
+) -> tuple[str, int | None, int | None]:
     """In-process call to Open WebUI's chat completion surface.
 
     We reuse ``utils.chat.generate_chat_completion`` so that provider auth,
     model routing, and access-control live in one place. `stream=False` —
-    we want the full response synchronously.
+    we want the full response synchronously. Returns
+    ``(content, tokens_in, tokens_out)``; token counts come from the
+    OpenAI-compatible ``usage`` field and are ``None`` when the provider
+    omits them.
     """
     from open_webui.utils.chat import generate_chat_completion
 
     payload = {'model': model_id, 'messages': messages, 'stream': False}
     result = await generate_chat_completion(request, payload, user, bypass_filter=True)
-    # OpenAI-compatible response shape.
+    content = ''
     try:
-        return result['choices'][0]['message']['content']
+        content = result['choices'][0]['message']['content']
     except (KeyError, IndexError, TypeError) as exc:
         log.warning('coach: unexpected LLM response shape: %s', exc)
-        return ''
+
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+    usage = None
+    if isinstance(result, dict):
+        usage = result.get('usage')
+    if isinstance(usage, dict):
+        p = usage.get('prompt_tokens')
+        c = usage.get('completion_tokens')
+        if isinstance(p, int):
+            tokens_in = p
+        if isinstance(c, int):
+            tokens_out = c
+    return content, tokens_in, tokens_out
 
 
 def _persist_flag(chat_id: str, message_id: str, user_id: str, verdict: EvaluateResponse) -> None:
@@ -191,17 +211,37 @@ async def evaluate(
     inject arbitrary policy state. On action=flag we persist the flag into
     the chat's stored JSON so it survives reload; action=followup has no
     backend side effect — the frontend replays it via submitPrompt.
+
+    Every call records one event in coach.events — status, action, model,
+    duration, tokens in/out, and any error — for the frontend activity
+    strip and ad-hoc debugging.
     """
+    # Capture token usage from within the LLM caller closure so the outer
+    # scope can read it after coach_service.evaluate returns — without
+    # changing llm_caller's signature and breaking the unit tests.
+    metrics: dict[str, int | None] = {'tokens_in': None, 'tokens_out': None}
 
     async def caller(model_id: str, messages: list[dict]) -> str:
-        return await _call_coach_llm(request, user, model_id, messages)
+        content, t_in, t_out = await _call_coach_llm(request, user, model_id, messages)
+        metrics['tokens_in'] = t_in
+        metrics['tokens_out'] = t_out
+        return content
 
+    trace_holder: dict[str, coach_service.EvalTrace] = {}
+
+    def sink(trace: coach_service.EvalTrace) -> None:
+        trace_holder['trace'] = trace
+
+    t0 = time.monotonic()
     verdict = await coach_service.evaluate(
         user_id=user.id,
         user_role=user.role,
         conversation=body.conversation,
         llm_caller=caller,
+        event_sink=sink,
     )
+    duration_ms = int((time.monotonic() - t0) * 1000)
+    trace = trace_holder.get('trace') or coach_service.EvalTrace()
 
     if verdict.action == 'flag' and body.chat_id and body.message_id:
         try:
@@ -209,4 +249,53 @@ async def evaluate(
         except Exception as exc:
             log.warning('coach: persist_flag failed: %s', exc)
 
+    status_label: str
+    if trace.demo:
+        status_label = 'demo'
+    elif trace.llm_error is not None:
+        status_label = 'error'
+    elif trace.skip_reason is not None and not trace.llm_called:
+        status_label = 'skipped'
+    else:
+        status_label = 'ok'
+
+    coach_events.record(
+        user_id=user.id,
+        status=status_label,
+        action=verdict.action,
+        reason=trace.skip_reason,
+        model_id=trace.model_id,
+        policy_count=trace.policy_count,
+        duration_ms=duration_ms,
+        tokens_in=metrics.get('tokens_in'),
+        tokens_out=metrics.get('tokens_out'),
+        error=trace.llm_error,
+        chat_id=body.chat_id,
+        message_id=body.message_id,
+    )
+
     return verdict
+
+
+# ─── Events (activity log) ─────────────────────────────────────────────
+
+
+@router.get('/events', response_model=list[CoachEventResponse])
+async def list_events(
+    limit: int = 50, user=Depends(get_verified_user)
+) -> list[CoachEventResponse]:
+    """Return the calling user's recent coach evaluations (newest first).
+
+    In-memory only (see coach.events module docstring); resets on
+    container restart. Default 50, hard-capped at the buffer size.
+    """
+    limit = max(1, min(limit, 100))
+    rows = coach_events.list_for_user(user.id, limit=limit)
+    return [CoachEventResponse(**coach_events.to_dict(e)) for e in rows]
+
+
+@router.delete('/events')
+async def clear_events(user=Depends(get_verified_user)) -> dict:
+    """Wipe the calling user's activity log. Useful before a demo run."""
+    cleared = coach_events.clear_for_user(user.id)
+    return {'cleared': cleared}

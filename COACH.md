@@ -122,6 +122,39 @@ Common rebase scenarios:
   (`.coach`) so additive changes don't break us; structural changes do.
   Integration tests catch this.
 
+## Demo mode
+
+Toggle in the sidebar Coach panel. When on, `/api/v1/coach/evaluate` skips
+the LLM and emits a scripted verdict:
+
+- Keyword triggers in the latest user message:
+  - `demo:flag` → warn-level flag
+  - `demo:critical` → critical-level flag
+  - `demo:followup` → coach-authored follow-up text
+  - `demo:none` → silent no-op
+- No trigger → rotates through flag → followup → none per user so an
+  impromptu three-turn demo still surfaces every UI path.
+
+Demo mode needs no `coach_model_id` or active policies — useful to rehearse
+UX without provider setup. Loop protection (service.py) still applies: a
+preceding coach-authored user turn downgrades any demo followup to a flag.
+
+## Activity log
+
+Every call into `evaluate` records one event in the in-memory ring buffer
+at `coach.events` (per user, capped at 100, newest-first). The CoachPanel
+renders the most recent ones under **Activity**: status (ok / error /
+skipped / demo), action, model, tokens in/out (from the provider's
+OpenAI-compatible `usage` field), duration, and any exception.
+
+API:
+- `GET /api/v1/coach/events?limit=50` — list.
+- `DELETE /api/v1/coach/events` — wipe (useful before a demo run).
+
+The log resets on container restart. Scaling past one Cloud Run instance
+would split the buffer across replicas — fine for diagnostics, not for
+audit (persist to a DB at that point).
+
 ## FAQ
 
 **What coach model should I pick?** Anything in the configured allowlist. For

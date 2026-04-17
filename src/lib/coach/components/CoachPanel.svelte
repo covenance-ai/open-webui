@@ -6,8 +6,9 @@
 	import Switch from '$lib/components/common/Switch.svelte';
 	import * as api from '../api';
 	import { coachConfig } from '../stores/config';
+	import { coachEvents, refreshCoachEvents } from '../stores/events';
 	import { coachPolicies, personalPolicies, sharedPolicies } from '../stores/policies';
-	import type { CoachPolicy } from '../types';
+	import type { CoachConfigForm, CoachEvent, CoachPolicy } from '../types';
 
 	import PolicyEditor from './PolicyEditor.svelte';
 	import PolicyList from './PolicyList.svelte';
@@ -33,17 +34,14 @@
 	}
 
 	$: enabled = $coachConfig?.enabled ?? false;
+	$: demoMode = $coachConfig?.demo_mode ?? false;
 	$: coachModelId = $coachConfig?.coach_model_id ?? '';
 	$: activeIds = $coachConfig?.active_policy_ids ?? [];
 	$: isAdmin = ($user as { role?: string } | null)?.role === 'admin';
 	$: token = typeof localStorage !== 'undefined' ? (localStorage.token ?? '') : '';
 
 	// ─── Config mutations ─────────────────────────────────────────────
-	async function saveConfig(patch: {
-		enabled?: boolean;
-		coach_model_id?: string | null;
-		active_policy_ids?: string[];
-	}) {
+	async function saveConfig(patch: CoachConfigForm) {
 		if (!token) return;
 		try {
 			const cfg = await api.saveCoachConfig(token, patch);
@@ -55,6 +53,48 @@
 
 	function onToggleEnabled(e: CustomEvent<boolean>) {
 		void saveConfig({ enabled: e.detail });
+	}
+
+	function onToggleDemoMode(e: CustomEvent<boolean>) {
+		void saveConfig({ demo_mode: e.detail });
+	}
+
+	// ─── Activity log ─────────────────────────────────────────────────
+	let activityOpen = false;
+	$: recentEvents = ($coachEvents ?? []) as CoachEvent[];
+
+	function toggleActivity() {
+		activityOpen = !activityOpen;
+		if (activityOpen && token) void refreshCoachEvents(token);
+	}
+
+	async function onClearActivity() {
+		if (!token) return;
+		try {
+			await api.clearCoachEvents(token);
+			coachEvents.set([]);
+		} catch (err) {
+			toast.error(`Coach: ${(err as Error).message}`);
+		}
+	}
+
+	function formatTs(ms: number): string {
+		const d = new Date(ms);
+		const pad = (n: number) => String(n).padStart(2, '0');
+		return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+	}
+
+	function statusClass(s: CoachEvent['status']): string {
+		switch (s) {
+			case 'ok':
+				return 'text-emerald-600 dark:text-emerald-400';
+			case 'error':
+				return 'text-red-600 dark:text-red-400';
+			case 'demo':
+				return 'text-purple-600 dark:text-purple-400';
+			default:
+				return 'text-gray-500 dark:text-gray-400';
+		}
 	}
 
 	function onModelChange(e: Event) {
@@ -157,13 +197,24 @@
 
 	{#if expanded}
 		<div class="px-1 pb-2 flex flex-col gap-2 text-xs">
+			<!-- Demo mode row -->
+			<div class="flex items-center justify-between">
+				<div class="flex flex-col">
+					<span class="text-gray-500 dark:text-gray-400">Demo mode</span>
+					<span class="text-[10px] text-gray-400 dark:text-gray-500 leading-tight">
+						Scripted verdicts; keywords: demo:flag, demo:followup, demo:critical, demo:none
+					</span>
+				</div>
+				<Switch state={demoMode} on:change={onToggleDemoMode} tooltip={demoMode ? 'Demo' : 'Live'} />
+			</div>
+
 			<!-- Model picker -->
 			<label class="flex flex-col gap-0.5">
 				<span class="text-gray-500 dark:text-gray-400">Coach model</span>
 				<select
 					value={coachModelId}
 					on:change={onModelChange}
-					disabled={!enabled}
+					disabled={!enabled || demoMode}
 					class="w-full px-2 py-1 rounded-md bg-transparent border border-gray-200 dark:border-gray-700 outline-none focus:ring-1 focus:ring-emerald-500 disabled:opacity-50"
 				>
 					<option value="">— none —</option>
@@ -217,6 +268,79 @@
 						on:delete={onDeletePolicy}
 						on:share={onSharePolicy}
 					/>
+				{/if}
+			</div>
+
+			<!-- Activity log: per-user in-memory ring from /api/v1/coach/events -->
+			<div class="mt-1">
+				<div class="flex items-center justify-between text-gray-500 dark:text-gray-400 mb-0.5">
+					<button
+						type="button"
+						class="flex items-center gap-1 text-xs"
+						on:click={toggleActivity}
+						aria-expanded={activityOpen}
+					>
+						<span class="transition-transform inline-block {activityOpen ? 'rotate-90' : ''}">▸</span>
+						<span>Activity</span>
+						{#if recentEvents.length > 0}
+							<span class="text-[10px] text-gray-400 dark:text-gray-500">
+								· {recentEvents.length}
+							</span>
+						{/if}
+					</button>
+					{#if activityOpen}
+						<button
+							type="button"
+							class="text-[10px] hover:text-red-500 disabled:opacity-50"
+							disabled={recentEvents.length === 0}
+							on:click={onClearActivity}
+							title="Clear activity log"
+						>
+							clear
+						</button>
+					{/if}
+				</div>
+
+				{#if activityOpen}
+					{#if recentEvents.length === 0}
+						<div class="text-gray-400 dark:text-gray-500 italic text-xs py-0.5">
+							No coach activity yet.
+						</div>
+					{:else}
+						<ul class="flex flex-col gap-0.5 max-h-48 overflow-y-auto pr-1 text-[11px]">
+							{#each recentEvents as evt (evt.id)}
+								<li
+									class="flex flex-col border-l-2 pl-1.5 {evt.status === 'error'
+										? 'border-red-400'
+										: evt.status === 'demo'
+											? 'border-purple-400'
+											: evt.status === 'ok'
+												? 'border-emerald-400'
+												: 'border-gray-300 dark:border-gray-600'}"
+								>
+									<div class="flex items-center gap-1 font-mono">
+										<span class="text-gray-400 dark:text-gray-500">{formatTs(evt.ts_ms)}</span>
+										<span class="font-semibold {statusClass(evt.status)}">{evt.status}</span>
+										<span class="text-gray-600 dark:text-gray-300">{evt.action ?? '—'}</span>
+										<span class="ml-auto text-gray-400 dark:text-gray-500">{evt.duration_ms}ms</span>
+									</div>
+									<div class="flex flex-wrap gap-x-2 text-gray-500 dark:text-gray-400">
+										{#if evt.model_id}<span>model={evt.model_id}</span>{/if}
+										{#if evt.tokens_in !== null || evt.tokens_out !== null}
+											<span>tok {evt.tokens_in ?? '?'}→{evt.tokens_out ?? '?'}</span>
+										{/if}
+										{#if evt.policy_count > 0}<span>policies={evt.policy_count}</span>{/if}
+										{#if evt.reason}<span>skip={evt.reason}</span>{/if}
+									</div>
+									{#if evt.error}
+										<div class="text-red-500 dark:text-red-400 break-all" title={evt.error}>
+											{evt.error}
+										</div>
+									{/if}
+								</li>
+							{/each}
+						</ul>
+					{/if}
 				{/if}
 			</div>
 		</div>

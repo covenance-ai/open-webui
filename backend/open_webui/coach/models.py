@@ -16,6 +16,7 @@ class CoachConfig(Base):
 
     user_id = Column(Text, primary_key=True)
     enabled = Column(Boolean, nullable=False, default=False)
+    demo_mode = Column(Boolean, nullable=False, default=False)
     coach_model_id = Column(Text, nullable=True)
     active_policy_ids = Column(JSON, nullable=False, default=list)
     created_at = Column(BigInteger, nullable=False)

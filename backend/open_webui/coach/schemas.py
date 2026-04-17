@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class CoachConfigResponse(BaseModel):
     user_id: str
     enabled: bool
+    demo_mode: bool = False
     coach_model_id: Optional[str] = None
     active_policy_ids: list[str]
     created_at: int
@@ -20,6 +21,7 @@ class CoachConfigForm(BaseModel):
     """Partial update. Only non-None fields are applied."""
 
     enabled: Optional[bool] = None
+    demo_mode: Optional[bool] = None
     coach_model_id: Optional[str] = None
     active_policy_ids: Optional[list[str]] = None
 
@@ -71,3 +73,22 @@ class EvaluateResponse(BaseModel):
     severity: Optional[str] = None  # 'info' | 'warn' | 'critical'
     rationale: Optional[str] = None
     followup_text: Optional[str] = None
+
+
+class CoachEventResponse(BaseModel):
+    """One row of the evaluation activity log (see coach.events)."""
+
+    id: str
+    user_id: str
+    ts_ms: int
+    status: str  # 'ok' | 'error' | 'skipped' | 'demo'
+    action: Optional[str] = None
+    reason: Optional[str] = None
+    model_id: Optional[str] = None
+    policy_count: int
+    duration_ms: int
+    tokens_in: Optional[int] = None
+    tokens_out: Optional[int] = None
+    error: Optional[str] = None
+    chat_id: Optional[str] = None
+    message_id: Optional[str] = None

@@ -29,6 +29,7 @@ class CoachConfigTable:
                 row = CoachConfig(
                     user_id=user_id,
                     enabled=False,
+                    demo_mode=False,
                     coach_model_id=None,
                     active_policy_ids=[],
                     created_at=now,
@@ -53,6 +54,7 @@ class CoachConfigTable:
                 row = CoachConfig(
                     user_id=user_id,
                     enabled=form.enabled if form.enabled is not None else False,
+                    demo_mode=form.demo_mode if form.demo_mode is not None else False,
                     coach_model_id=form.coach_model_id,
                     active_policy_ids=form.active_policy_ids or [],
                     created_at=now,
@@ -62,6 +64,8 @@ class CoachConfigTable:
             else:
                 if form.enabled is not None:
                     row.enabled = form.enabled
+                if form.demo_mode is not None:
+                    row.demo_mode = form.demo_mode
                 if form.coach_model_id is not None:
                     row.coach_model_id = form.coach_model_id
                 if form.active_policy_ids is not None:

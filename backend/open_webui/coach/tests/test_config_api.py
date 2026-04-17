@@ -72,6 +72,25 @@ def test_upsert_partial_leaves_unset_fields_unchanged(fresh_db):
     assert cfg.active_policy_ids == ['p1', 'p2']
 
 
+def test_demo_mode_persists_and_defaults_false(fresh_db):
+    """demo_mode round-trips through storage; default is False."""
+    from open_webui.coach.schemas import CoachConfigForm
+    from open_webui.coach.storage import CoachConfigs
+
+    cfg = CoachConfigs.get_or_default('u1')
+    assert cfg.demo_mode is False
+
+    CoachConfigs.upsert('u1', CoachConfigForm(demo_mode=True))
+    cfg = CoachConfigs.get_or_default('u1')
+    assert cfg.demo_mode is True
+
+    # Partial update leaves demo_mode alone.
+    CoachConfigs.upsert('u1', CoachConfigForm(enabled=True))
+    cfg = CoachConfigs.get_or_default('u1')
+    assert cfg.demo_mode is True
+    assert cfg.enabled is True
+
+
 def test_configs_are_per_user(fresh_db):
     """u1 and u2 should have independent configs with no crosstalk."""
     from open_webui.coach.schemas import CoachConfigForm

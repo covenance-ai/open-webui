@@ -5,6 +5,7 @@ import { WEBUI_API_BASE_URL } from '$lib/constants';
 import type {
 	CoachConfig,
 	CoachConfigForm,
+	CoachEvent,
 	CoachPolicy,
 	CoachPolicyCreateForm,
 	CoachPolicyUpdateForm
@@ -77,5 +78,18 @@ export const shareCoachPolicy = (token: string, id: string) =>
 export const unshareCoachPolicy = (token: string, id: string) =>
 	fetchJson<CoachPolicy>(`${BASE}/policies/${encodeURIComponent(id)}/unshare`, {
 		method: 'POST',
+		headers: authHeaders(token)
+	});
+
+// Events (in-memory activity log)
+export const listCoachEvents = (token: string, limit = 50) =>
+	fetchJson<CoachEvent[]>(`${BASE}/events?limit=${limit}`, {
+		method: 'GET',
+		headers: authHeaders(token)
+	});
+
+export const clearCoachEvents = (token: string) =>
+	fetchJson<{ cleared: number }>(`${BASE}/events`, {
+		method: 'DELETE',
 		headers: authHeaders(token)
 	});
