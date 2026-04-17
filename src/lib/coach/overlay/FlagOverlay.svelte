@@ -1,47 +1,89 @@
 <script lang="ts">
 	// Renders coach flags as small pills anchored to `[data-message-id=<id>]`
 	// nodes. Mounted once at document.body from init.ts. Positioned via
-	// getBoundingClientRect + fixed positioning — we re-measure on every
-	// reactive store change, on window resize, and on document scroll.
+	// getBoundingClientRect + fixed positioning — re-measured on store change,
+	// window resize, document scroll, and DOM mutations inside <body>.
+	//
+	// Two guards prevent a self-feeding loop (the overlay's own DOM lives inside
+	// body, so every re-render is itself a mutation observed by the watcher):
+	//   1) rAF-throttle scheduleRemeasure, so at most one pass per frame.
+	//   2) Only assign `positions` when the rect map actually changed; a no-op
+	//      assignment would still re-render the #each, mutate the DOM, and
+	//      re-fire the observer ad infinitum.
+	// When the flag map is empty we early-return without touching state, so
+	// first paint (no flags yet) does not thrash on Open WebUI's initial render.
 
 	import { get } from 'svelte/store';
 	import { onDestroy, onMount } from 'svelte';
 	import { coachFlags, type CoachFlag } from '../stores/flags';
 
-	// rects keyed by messageId. undefined means "node not mounted yet".
 	let positions: Record<string, DOMRect | null> = {};
-
 	let observer: MutationObserver | null = null;
-	let tick = 0;
+	let rafPending = false;
 
-	// Re-measure every anchor. Cheap — handful of DOM calls per turn.
-	// Uses get(coachFlags) rather than $coachFlags because Svelte 5 disallows
-	// store auto-subscription inside nested function scopes.
+	function rectsEqual(
+		a: Record<string, DOMRect | null>,
+		b: Record<string, DOMRect | null>
+	) {
+		const ak = Object.keys(a);
+		const bk = Object.keys(b);
+		if (ak.length !== bk.length) return false;
+		for (const k of ak) {
+			const ra = a[k];
+			const rb = b[k];
+			if (ra === rb) continue;
+			if (!ra || !rb) return false;
+			if (
+				ra.top !== rb.top ||
+				ra.left !== rb.left ||
+				ra.width !== rb.width ||
+				ra.height !== rb.height
+			) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	function remeasure() {
-		const next: Record<string, DOMRect | null> = {};
 		const flags = get(coachFlags);
-		for (const id of Object.keys(flags)) {
+		const ids = Object.keys(flags);
+		if (ids.length === 0) {
+			if (Object.keys(positions).length !== 0) positions = {};
+			return;
+		}
+		const next: Record<string, DOMRect | null> = {};
+		for (const id of ids) {
 			const el = document.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
 			next[id] = el ? (el as HTMLElement).getBoundingClientRect() : null;
 		}
-		positions = next;
-		tick++; // trigger reactive re-render
+		if (!rectsEqual(positions, next)) {
+			positions = next;
+		}
 	}
 
-	$: $coachFlags, remeasure(); // reactive on store change
+	function scheduleRemeasure() {
+		if (rafPending) return;
+		rafPending = true;
+		requestAnimationFrame(() => {
+			rafPending = false;
+			remeasure();
+		});
+	}
+
+	$: $coachFlags, scheduleRemeasure();
 
 	onMount(() => {
-		window.addEventListener('resize', remeasure);
-		window.addEventListener('scroll', remeasure, true);
-		observer = new MutationObserver(remeasure);
+		window.addEventListener('resize', scheduleRemeasure);
+		window.addEventListener('scroll', scheduleRemeasure, true);
+		observer = new MutationObserver(scheduleRemeasure);
 		observer.observe(document.body, { childList: true, subtree: true });
-		// Initial measure (some messages may already be in DOM).
-		remeasure();
+		scheduleRemeasure();
 	});
 
 	onDestroy(() => {
-		window.removeEventListener('resize', remeasure);
-		window.removeEventListener('scroll', remeasure, true);
+		window.removeEventListener('resize', scheduleRemeasure);
+		window.removeEventListener('scroll', scheduleRemeasure, true);
 		observer?.disconnect();
 	});
 
@@ -53,21 +95,19 @@
 				: 'bg-sky-100 dark:bg-sky-900 text-sky-900 dark:text-sky-100 border-sky-300 dark:border-sky-700';
 </script>
 
-{#key tick}
-	{#each Object.entries($coachFlags) as [msgId, flag] (msgId)}
-		{@const rect = positions[msgId]}
-		{#if rect}
+{#each Object.entries($coachFlags) as [msgId, flag] (msgId)}
+	{@const rect = positions[msgId]}
+	{#if rect}
+		<div
+			style="position: fixed; top: {rect.top + 4}px; left: {rect.right - 16}px; transform: translateX(-100%); z-index: 40; max-width: 320px;"
+			class="pointer-events-auto"
+		>
 			<div
-				style="position: fixed; top: {rect.top + 4}px; left: {rect.right - 16}px; transform: translateX(-100%); z-index: 40; max-width: 320px;"
-				class="pointer-events-auto"
+				title={flag.rationale}
+				class="text-xs px-2 py-1 rounded-full border shadow-sm {severityClass(flag.severity)} truncate"
 			>
-				<div
-					title={flag.rationale}
-					class="text-xs px-2 py-1 rounded-full border shadow-sm {severityClass(flag.severity)} truncate"
-				>
-					⚑ {flag.rationale}
-				</div>
+				⚑ {flag.rationale}
 			</div>
-		{/if}
-	{/each}
-{/key}
+		</div>
+	{/if}
+{/each}
