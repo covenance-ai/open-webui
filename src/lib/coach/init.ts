@@ -15,11 +15,23 @@ import { get } from 'svelte/store';
 import { user } from '$lib/stores';
 import { WEBUI_API_BASE_URL } from '$lib/constants';
 import * as api from './api';
+import { setApproval } from './stores/approvals';
 import { coachConfig } from './stores/config';
 import { refreshCoachEvents } from './stores/events';
 import { coachFlags, setFlag } from './stores/flags';
 import { coachPolicies } from './stores/policies';
 import { flashCoachResult, setCoachProcessing } from './stores/status';
+
+function uuidv4(): string {
+	if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+		return crypto.randomUUID();
+	}
+	return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+		const r = (Math.random() * 16) | 0;
+		const v = c === 'x' ? r : (r & 0x3) | 0x8;
+		return v.toString(16);
+	});
+}
 
 let bootstrapped = false;
 let evalWired = false;
@@ -135,6 +147,17 @@ async function onChatFinish(e: Event) {
 	// Reflect the verdict in the status indicator.
 	if (!verdict || verdict.action === 'none') {
 		flashCoachResult('ok', chatId);
+		// Coach reviewed and let the assistant reply through — annotate
+		// the message with a green shield so the user sees the review
+		// happened. policy_count is unknown post-hoc; the active set
+		// at evaluation time is the upper bound.
+		if (detail?.messageId) {
+			setApproval(detail.messageId, {
+				phase: 'post',
+				policyCount: cfg?.active_policy_ids?.length ?? 0,
+				createdAt: Date.now()
+			});
+		}
 		return;
 	}
 	if (verdict.action === 'flag') {
@@ -181,8 +204,10 @@ async function mountOverlay() {
 		const { mount } = await import('svelte');
 		const FlagOverlay = (await import('./overlay/FlagOverlay.svelte')).default;
 		const StatusOverlay = (await import('./overlay/StatusOverlay.svelte')).default;
+		const BadgeOverlay = (await import('./overlay/BadgeOverlay.svelte')).default;
 		mount(FlagOverlay, { target: document.body });
 		mount(StatusOverlay, { target: document.body });
+		mount(BadgeOverlay, { target: document.body });
 	} catch (err) {
 		console.warn('[coach] overlay mount failed:', err);
 		overlayMounted = false;
@@ -207,6 +232,10 @@ user.subscribe((u) => {
 
 export interface PreflightVerdict {
 	action: 'none' | 'block' | 'error';
+	// True only when coach actually ran an evaluation. Lets the caller
+	// distinguish "we screened this and it passed" (badge it) from
+	// "coach was off / not configured" (no badge).
+	evaluated: boolean;
 	rationale?: string | null;
 	policy_id?: string | null;
 }
@@ -217,13 +246,13 @@ export async function coachPreflight(
 	chatId?: string | null
 ): Promise<PreflightVerdict> {
 	const token = getToken();
-	if (!token) return { action: 'none' };
+	if (!token) return { action: 'none', evaluated: false };
 	const cfg = get(coachConfig);
 	const realPathReady = Boolean(
 		cfg?.coach_model_id && (cfg?.active_policy_ids?.length ?? 0) > 0
 	);
 	if (!cfg?.enabled || (!cfg.demo_mode && !realPathReady)) {
-		return { action: 'none' };
+		return { action: 'none', evaluated: false };
 	}
 
 	const prior = linearize(history);
@@ -252,7 +281,7 @@ export async function coachPreflight(
 	} catch (err) {
 		console.warn('[coach] preflight failed:', err);
 		flashCoachResult('error', scope);
-		return { action: 'error' };
+		return { action: 'error', evaluated: true };
 	} finally {
 		void refreshCoachEvents(token);
 	}
@@ -261,18 +290,129 @@ export async function coachPreflight(
 		flashCoachResult('blocked', scope);
 		return {
 			action: 'block',
+			evaluated: true,
 			rationale: verdict.rationale ?? null,
 			policy_id: verdict.policy_id ?? null
 		};
 	}
 	flashCoachResult('ok', scope);
-	return { action: 'none' };
+	return { action: 'none', evaluated: true };
+}
+
+// ── Block-message rendering (in-chat, persistent) ───────────────────
+// When pre-flight blocks, a toast disappears in seconds. The user
+// needs unlimited time to read the rule and the rationale, so we
+// instead place a coach-authored "assistant" message into the chat
+// itself, in the same slot the AI reply would have occupied.
+
+export interface PreflightBlockDetail {
+	rationale?: string | null;
+	policy_id?: string | null;
+}
+
+export function composeCoachBlockMarkdown(verdict: PreflightBlockDetail): string {
+	const policy = (get(coachPolicies) ?? []).find((p) => p.id === verdict.policy_id) ?? null;
+	const lines: string[] = [];
+	lines.push('## 🛑 Coach blocked this request');
+	lines.push('');
+	if (policy) {
+		lines.push(`**Rule violated — ${policy.title}**`);
+		lines.push('');
+		lines.push(policy.body);
+		lines.push('');
+	}
+	if (verdict.rationale) {
+		lines.push("**Why this query specifically — coach's rationale:**");
+		lines.push('');
+		lines.push(`> ${verdict.rationale.replace(/\n/g, '\n> ')}`);
+		lines.push('');
+	}
+	lines.push('---');
+	lines.push(
+		'_This message was placed here by the policy coach, not the LLM. ' +
+			'You can rephrase your request, or take this task outside the assistant._'
+	);
+	return lines.join('\n');
+}
+
+// Mutates `history` in place: appends a user turn for `userPrompt` and a
+// coach-authored assistant turn carrying the block explanation. Returns
+// both ids so the caller can update history.currentId and persist the chat.
+export function coachInsertBlockExchange(
+	history: UpstreamHistory,
+	userPrompt: string,
+	verdict: PreflightBlockDetail,
+	models: string[]
+): { userMessageId: string; coachMessageId: string } {
+	const ts = Math.floor(Date.now() / 1000);
+	const parentId = history.currentId ?? null;
+
+	const userMessageId = uuidv4();
+	const coachMessageId = uuidv4();
+
+	const userMsg = {
+		id: userMessageId,
+		parentId,
+		childrenIds: [coachMessageId],
+		role: 'user' as const,
+		content: userPrompt,
+		timestamp: ts,
+		models
+	};
+
+	const coachMsg = {
+		id: coachMessageId,
+		parentId: userMessageId,
+		childrenIds: [],
+		role: 'assistant' as const,
+		content: composeCoachBlockMarkdown(verdict),
+		model: 'coach',
+		modelName: 'Policy coach',
+		modelIdx: 0,
+		timestamp: ts,
+		done: true,
+		coachAuthored: true,
+		coach_authored: true,
+		coach: {
+			type: 'block',
+			policy_id: verdict.policy_id ?? null,
+			rationale: verdict.rationale ?? null
+		}
+	};
+
+	(history.messages as Record<string, unknown>)[userMessageId] = userMsg;
+	(history.messages as Record<string, unknown>)[coachMessageId] = coachMsg;
+	if (parentId && history.messages[parentId]) {
+		const parent = history.messages[parentId] as { childrenIds?: string[] };
+		parent.childrenIds = [...(parent.childrenIds ?? []), userMessageId];
+	}
+	history.currentId = coachMessageId;
+	return { userMessageId, coachMessageId };
+}
+
+// Lets Chat.svelte mark a freshly-added user message as coach-approved
+// (pre-flight let it through). Post-flight approvals are set by
+// onChatFinish above — Chat.svelte handles the pre case because it
+// owns the user-message id at that moment.
+export function setCoachApproval(messageId: string, phase: 'pre' | 'post'): void {
+	const cfg = get(coachConfig);
+	setApproval(messageId, {
+		phase,
+		policyCount: cfg?.active_policy_ids?.length ?? 0,
+		createdAt: Date.now()
+	});
 }
 
 // Expose on window for the Chat.svelte injection — keeps the site's
 // change tiny (single anchor) and avoids having Chat.svelte import from
 // coach internals.
 if (typeof window !== 'undefined') {
-	(window as unknown as { coachPreflight: typeof coachPreflight }).coachPreflight =
-		coachPreflight;
+	const w = window as unknown as {
+		coachPreflight: typeof coachPreflight;
+		coachInsertBlockExchange: typeof coachInsertBlockExchange;
+		setCoachApproval: typeof setCoachApproval;
+	};
+	w.coachPreflight = coachPreflight;
+	w.coachInsertBlockExchange = coachInsertBlockExchange;
+	w.setCoachApproval = setCoachApproval;
 }

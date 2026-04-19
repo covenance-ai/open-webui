@@ -23,8 +23,19 @@ from open_webui.internal.db import get_db_context
 DEFAULT_HIRING_POLICY_TITLE = 'No LLM for hiring decisions'
 DEFAULT_HIRING_POLICY_BODY = (
     'This assistant must not be used for hiring-related decisions, '
-    'including screening candidates, choosing whom to hire, or ranking '
-    'résumés. Redirect users to handle hiring outside of this tool.'
+    'including screening candidates, choosing whom to hire, ranking '
+    'résumés, or recommending one applicant over another. Redirect '
+    'such tasks to a human reviewer outside this tool.\n\n'
+    'Why this matters — EU AI Act (Regulation (EU) 2024/1689) classifies '
+    'AI systems used in employment, recruitment, candidate evaluation, '
+    'and worker management as **high-risk** under Annex III §4. '
+    'Deploying or using a general-purpose chat assistant for hiring '
+    'decisions in the EU triggers strict obligations on risk management, '
+    'human oversight, transparency, and record-keeping.\n\n'
+    'References:\n'
+    '- EU AI Act, Annex III high-risk areas: https://artificialintelligenceact.eu/annex/3/\n'
+    '- EU AI Act, Article 6 (high-risk classification): https://artificialintelligenceact.eu/article/6/\n'
+    '- EEOC guidance on AI in hiring (US): https://www.eeoc.gov/ai'
 )
 
 

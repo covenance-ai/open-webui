@@ -140,36 +140,65 @@ Grep anchors:
 
 ---
 
-## Site 4b — `src/lib/components/chat/Chat.svelte` (pre-flight policy screen)
+## Site 4b — `src/lib/components/chat/Chat.svelte` (pre-flight policy screen + in-chat block)
 
-**What**: at the top of `submitPrompt`, call `window.coachPreflight` if it's
-been installed. On an `action=block` verdict, show the rationale in a toast
-and return without sending the query to the LLM.
+**What**: at the top of `submitPrompt`, call `window.coachPreflight`. On
+`action=block`, render a coach-authored "assistant" message containing the
+rule + rationale via `window.coachInsertBlockExchange`, persist the chat,
+and return without sending the query to the LLM. On `action=none` *and*
+`evaluated=true`, mark the freshly-added user message as coach-approved
+via `window.setCoachApproval` so the BadgeOverlay can render a green
+shield.
 
-**Anchor**: the first line of `submitPrompt` — the `console.log('submitPrompt', ...)`.
+**Anchor**: the first line of `submitPrompt` — the `console.log('submitPrompt', ...)`,
+and the `history.messages[userMessageId] = userMessage` line further down
+where the user message gets added.
 
-Change:
+Change (block path):
 ```svelte
 const submitPrompt = async (userPrompt, { _raw = false } = {}) => {
   console.log('submitPrompt', userPrompt, $chatId);
 
   // [coach] Pre-flight policy screen.
+  let coachPreflightVerdict = null;
   const coachPreflight = (window)?.coachPreflight;
   if (typeof coachPreflight === 'function' && userPrompt) {
-    const verdict = await coachPreflight(userPrompt, history);
-    if (verdict?.action === 'block') {
-      toast.error(`Coach blocked: ${verdict.rationale ?? 'policy violation'}`);
+    coachPreflightVerdict = await coachPreflight(userPrompt, history, $chatId);
+    if (coachPreflightVerdict?.action === 'block') {
+      const insertBlock = (window)?.coachInsertBlockExchange;
+      if (typeof insertBlock === 'function') {
+        const { coachMessageId } = insertBlock(history, userPrompt, coachPreflightVerdict, selectedModels);
+        // ...persist via updateChatById, clear input...
+      } else {
+        toast.error(`Coach blocked: ${coachPreflightVerdict.rationale}`);
+      }
       return;
     }
   }
   // ... existing body ...
-};
 ```
 
-`coachPreflight` is installed on `window` by `src/lib/coach/init.ts`; the
-hook stays dumb and fails open if coach is off / unreachable.
+Change (approval path, after user message is appended to history):
+```svelte
+history.messages[userMessageId] = userMessage;
+history.currentId = userMessageId;
+// ...existing childrenIds wiring...
 
-Grep anchor: `grep -nF "coachPreflight" src/lib/components/chat/Chat.svelte` returns 2 lines.
+// [coach] Mark user message as coach-approved (pre-flight passed).
+if (coachPreflightVerdict?.action === 'none' && coachPreflightVerdict.evaluated) {
+  const setApproval = (window)?.setCoachApproval;
+  if (typeof setApproval === 'function') setApproval(userMessageId, 'pre');
+}
+```
+
+`coachPreflight`, `coachInsertBlockExchange` and `setCoachApproval` are
+installed on `window` by `src/lib/coach/init.ts`; all three hooks stay
+dumb and fail open if coach internals aren't loaded yet.
+
+Grep anchors:
+- `grep -nF "coachPreflight" src/lib/components/chat/Chat.svelte` returns 2+ lines.
+- `grep -nF "coachInsertBlockExchange" src/lib/components/chat/Chat.svelte` returns 1 line.
+- `grep -nF "setCoachApproval" src/lib/components/chat/Chat.svelte` returns 1 line.
 
 ---
 

@@ -56,6 +56,12 @@ check "Chat.svelte coach:followup" \
 check "Chat.svelte coachPreflight" \
   "src/lib/components/chat/Chat.svelte" \
   "coachPreflight" 2
+check "Chat.svelte coachInsertBlockExchange" \
+  "src/lib/components/chat/Chat.svelte" \
+  "coachInsertBlockExchange" 1
+check "Chat.svelte setCoachApproval" \
+  "src/lib/components/chat/Chat.svelte" \
+  "setCoachApproval" 1
 
 # Site 5 — Messages.svelte data-message-id anchor
 check "Messages.svelte data-message-id" \
