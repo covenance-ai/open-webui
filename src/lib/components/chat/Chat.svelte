@@ -1911,6 +1911,19 @@
 	const submitHandler = async (userPrompt, { _raw = false } = {}) => {
 		console.log('submitHandler', userPrompt, $chatId);
 
+		// [coach] Pre-flight policy screen. window.coachPreflight is installed
+		// by src/lib/coach/init.ts; if coach decides the query would violate
+		// a policy (e.g. "no LLM for hiring decisions"), we halt here and
+		// surface the rationale instead of sending the query to the LLM.
+		const coachPreflight = (window)?.coachPreflight;
+		if (typeof coachPreflight === 'function' && userPrompt) {
+			const verdict = await coachPreflight(userPrompt, history);
+			if (verdict?.action === 'block') {
+				toast.error(`Coach blocked: ${verdict.rationale ?? 'policy violation'}`);
+				return;
+			}
+		}
+
 		const _selectedModels = selectedModels.map((modelId) =>
 			$models.map((m) => m.id).includes(modelId) ? modelId : ''
 		);

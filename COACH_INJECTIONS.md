@@ -140,6 +140,39 @@ Grep anchors:
 
 ---
 
+## Site 4b — `src/lib/components/chat/Chat.svelte` (pre-flight policy screen)
+
+**What**: at the top of `submitPrompt`, call `window.coachPreflight` if it's
+been installed. On an `action=block` verdict, show the rationale in a toast
+and return without sending the query to the LLM.
+
+**Anchor**: the first line of `submitPrompt` — the `console.log('submitPrompt', ...)`.
+
+Change:
+```svelte
+const submitPrompt = async (userPrompt, { _raw = false } = {}) => {
+  console.log('submitPrompt', userPrompt, $chatId);
+
+  // [coach] Pre-flight policy screen.
+  const coachPreflight = (window)?.coachPreflight;
+  if (typeof coachPreflight === 'function' && userPrompt) {
+    const verdict = await coachPreflight(userPrompt, history);
+    if (verdict?.action === 'block') {
+      toast.error(`Coach blocked: ${verdict.rationale ?? 'policy violation'}`);
+      return;
+    }
+  }
+  // ... existing body ...
+};
+```
+
+`coachPreflight` is installed on `window` by `src/lib/coach/init.ts`; the
+hook stays dumb and fails open if coach is off / unreachable.
+
+Grep anchor: `grep -nF "coachPreflight" src/lib/components/chat/Chat.svelte` returns 2 lines.
+
+---
+
 ## Site 5 — `src/lib/components/chat/Messages.svelte` (overlay anchor)
 
 **What**: add `data-message-id={message.id}` to the wrapper `<div>` of each

@@ -255,11 +255,19 @@ async def evaluate(
         conversation=body.conversation,
         llm_caller=caller,
         event_sink=sink,
+        phase=body.phase,
     )
     duration_ms = int((time.monotonic() - t0) * 1000)
     trace = trace_holder.get('trace') or coach_service.EvalTrace()
 
-    if verdict.action == 'flag' and body.chat_id and body.message_id:
+    # Only post-flight flags get persisted into chat history. Pre-flight
+    # verdicts refer to a message that hasn't been sent yet.
+    if (
+        body.phase == 'post'
+        and verdict.action == 'flag'
+        and body.chat_id
+        and body.message_id
+    ):
         try:
             _persist_flag(body.chat_id, body.message_id, user.id, verdict)
         except Exception as exc:
@@ -299,6 +307,7 @@ async def evaluate(
             'event': 'coach.evaluate',
             'event_id': evt.id,
             'user_id': user.id,
+            'phase': body.phase,
             'status': status_label,
             'action': verdict.action,
             'model': trace.model_id,
@@ -442,6 +451,7 @@ async def dry_run(
         conversation=body.conversation,
         llm_caller=caller,
         event_sink=sink,
+        phase=body.phase,
     )
     duration_ms = int((time.monotonic() - t0) * 1000)
     trace = trace_holder.get('trace') or coach_service.EvalTrace()

@@ -61,14 +61,21 @@ class EvaluateRequest(BaseModel):
     chat_id: Optional[str] = None
     message_id: Optional[str] = None
     conversation: list[ConversationTurn]
+    # 'post' (default) — evaluate the assistant's last reply.
+    # 'pre'            — screen a pending user query before it reaches the LLM.
+    phase: str = 'post'
 
 
 class EvaluateResponse(BaseModel):
-    """Coach verdict. One of three actions, with the optional payload for
-    `flag` and `followup`. `action=none` means nothing to do; frontend
-    renders nothing."""
+    """Coach verdict.
 
-    action: str  # 'none' | 'flag' | 'followup'
+    Post-flight actions: 'none' | 'flag' | 'followup'.
+    Pre-flight actions:  'none' | 'block' (block requires a rationale).
+
+    `action=none` means nothing to do; frontend renders nothing.
+    """
+
+    action: str
     policy_id: Optional[str] = None
     severity: Optional[str] = None  # 'info' | 'warn' | 'critical'
     rationale: Optional[str] = None
@@ -123,6 +130,7 @@ class DryRunRequest(BaseModel):
     coach_model_id: Optional[str] = None
     demo_mode: Optional[bool] = None
     enabled: Optional[bool] = None  # override the on/off switch for one-off runs
+    phase: str = 'post'  # 'pre' | 'post'
 
 
 class CoachEventResponse(BaseModel):

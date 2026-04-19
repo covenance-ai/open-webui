@@ -69,6 +69,33 @@ Max chain length 1 (configurable later).
 
 ## Local dev
 
+Two terminals, no Docker, SQLite DB so nothing is shared with prod:
+
+```bash
+# terminal 1 — backend (FastAPI on :8080)
+cd open-webui/backend
+source .venv/bin/activate
+DATABASE_URL=sqlite:///./coach-dev.db \
+  WEBUI_SECRET_KEY=dev-local-secret \
+  uvicorn open_webui.main:app --reload --port 8080
+
+# terminal 2 — frontend (Vite on :5173)
+cd open-webui
+npm run dev
+```
+
+Open http://localhost:5173. Sign up (first user becomes admin). Then run
+the canonical-scenarios suite in a third terminal:
+
+```bash
+cd open-webui/backend
+PYTHONPATH=. python -m pytest open_webui/coach/tests/test_canonical_scenarios.py -v
+```
+
+Flip demo mode on from the Coach panel; the scripted triggers (`demo:flag`,
+`demo:followup`, `demo:block`, hiring keywords) all work without a
+configured coach model.
+
 See `README.md` for upstream dev instructions. Coach-specific notes:
 
 - Run `scripts/check_injections.sh` after every rebase — see below.
@@ -121,6 +148,38 @@ Common rebase scenarios:
 - **Upstream changes `chat.history.messages[id]` shape** — we use our own key
   (`.coach`) so additive changes don't break us; structural changes do.
   Integration tests catch this.
+
+## Status indicator
+
+The CoachPanel header shows a compact status pill driven by a small state
+machine (`src/lib/coach/stores/status.ts`):
+
+| State               | Glyph | Meaning                                             |
+|---------------------|-------|-----------------------------------------------------|
+| off                 | ○     | coach disabled                                      |
+| idle                | ●     | enabled, nothing in flight                          |
+| processing-pre      | ◐     | screening a pending user query (pre-flight)        |
+| processing-post     | ◐     | reviewing an assistant reply (post-flight)         |
+| ok                  | ✓     | last evaluation returned none; flashes ~4s          |
+| flagged             | ⚑     | post-flight flag                                    |
+| followed-up         | ↺     | post-flight followup                                |
+| blocked             | ⛔    | pre-flight block (query halted before LLM call)    |
+| error               | ✕     | LLM call failed                                     |
+
+Transient states revert to `idle` (or `off` if coach was disabled mid-flash).
+
+## Pre-flight blocking (Chat.svelte injection site 4b)
+
+Before `submitPrompt` sends a user query to the LLM, it calls
+`window.coachPreflight(userMessage, history)` (installed by
+`src/lib/coach/init.ts`). On `action=block`, the submission is aborted
+and the rationale is surfaced via a toast. `fail open` is deliberate —
+if coach is off or the endpoint errors, the chat still goes through.
+
+Canonical demo: with a "No LLM for hiring decisions" policy active (and
+demo mode on for determinism), typing *"Help me decide whom to hire"*
+produces a red **blocked** pill and halts the query with the policy's
+rationale. See `test_canonical_scenarios.py` for all 12 scripted paths.
 
 ## Demo mode
 

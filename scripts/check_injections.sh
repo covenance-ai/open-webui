@@ -52,6 +52,11 @@ check "Chat.svelte coach:followup" \
   "src/lib/components/chat/Chat.svelte" \
   "coach:followup" 1
 
+# Site 4b — Chat.svelte pre-flight policy screen (coachPreflight hook)
+check "Chat.svelte coachPreflight" \
+  "src/lib/components/chat/Chat.svelte" \
+  "coachPreflight" 2
+
 # Site 5 — Messages.svelte data-message-id anchor
 check "Messages.svelte data-message-id" \
   "src/lib/components/chat/Messages.svelte" \

@@ -61,13 +61,61 @@ def format_conversation(turns: list[ConversationTurn], max_turns: int = 10) -> s
 def build_evaluation_prompt(
     policies: list[CoachPolicyResponse], conversation: list[ConversationTurn]
 ) -> list[dict]:
-    """Produce the messages array for the coach LLM call."""
+    """Produce the messages array for the coach LLM call (post-flight)."""
     system = SYSTEM_PROMPT.strip()
     user_content = (
         'Active policies:\n'
         f'{format_policies(policies)}\n\n'
         'Recent conversation (most recent last):\n'
         f'{format_conversation(conversation)}\n\n'
+        'Emit your verdict as JSON only.'
+    )
+    return [
+        {'role': 'system', 'content': system},
+        {'role': 'user', 'content': user_content},
+    ]
+
+
+PREFLIGHT_SYSTEM_PROMPT = """You are a coach screening user queries before they reach an AI assistant.
+
+You are given a list of active policies (natural-language rules). Given the user's pending question (and any prior conversation for context), decide whether answering the question would violate any policy.
+
+Your verdict is one of:
+- "none"  — the query is fine; do not interrupt.
+- "block" — the query would cause a policy violation if answered. Briefly explain which rule would be broken in `rationale` — the user will see this.
+
+Rules:
+1. Output JSON only, no prose, no code fence. Must match this schema exactly:
+   {"action": "none"|"block",
+    "policy_id": "<id>" | null,
+    "severity": "info"|"warn"|"critical" | null,
+    "rationale": "<= 280 chars" | null}
+2. At most one policy per verdict — pick the most relevant.
+3. Only block when the query clearly matches a policy; marginal cases should be "none".
+4. If you cannot produce valid JSON, output exactly {"action":"none"}.
+"""
+
+
+def build_preflight_prompt(
+    policies: list[CoachPolicyResponse], conversation: list[ConversationTurn]
+) -> list[dict]:
+    """Messages for a pre-flight coach call.
+
+    The pending user query is the last turn; earlier turns are context.
+    """
+    system = PREFLIGHT_SYSTEM_PROMPT.strip()
+    # Identify the pending query so the coach doesn't confuse itself.
+    pending = next(
+        (t.content for t in reversed(conversation) if t.role == 'user'),
+        '',
+    )
+    user_content = (
+        'Active policies:\n'
+        f'{format_policies(policies)}\n\n'
+        'Prior conversation (most recent last, may be empty):\n'
+        f'{format_conversation(conversation[:-1] if conversation else [])}\n\n'
+        "Pending user query under review:\n"
+        f'"{pending}"\n\n'
         'Emit your verdict as JSON only.'
     )
     return [

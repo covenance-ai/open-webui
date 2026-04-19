@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any, Callable, Optional
 
-from open_webui.coach.prompts import build_evaluation_prompt
+from open_webui.coach.prompts import build_evaluation_prompt, build_preflight_prompt
 from open_webui.coach.schemas import (
     ConversationTurn,
     CoachPolicyResponse,
@@ -46,8 +46,13 @@ from open_webui.coach.storage import CoachConfigs, CoachPolicies
 
 log = logging.getLogger(__name__)
 
-_VALID_ACTIONS = {'none', 'flag', 'followup'}
+_POST_ACTIONS = {'none', 'flag', 'followup'}
+_PRE_ACTIONS = {'none', 'block'}
 _VALID_SEVERITIES = {'info', 'warn', 'critical', None}
+
+
+def _valid_actions_for_phase(phase: str) -> set[str]:
+    return _PRE_ACTIONS if phase == 'pre' else _POST_ACTIONS
 
 
 @dataclass
@@ -105,12 +110,16 @@ def _loop_protection_violated(conversation: list[ConversationTurn]) -> bool:
     return False
 
 
-def parse_verdict(raw: str, valid_policy_ids: set[str]) -> EvaluateResponse:
+def parse_verdict(
+    raw: str, valid_policy_ids: set[str], phase: str = 'post'
+) -> EvaluateResponse:
     """Parse a coach LLM reply into an EvaluateResponse.
 
-    Malformed output → action=none (logged). Unknown ``policy_id`` is
-    dropped to null rather than failing the whole verdict. This function is
-    deliberately resilient: its inputs are untrusted LLM strings.
+    Allowed actions depend on ``phase``: post allows none/flag/followup;
+    pre allows none/block. Malformed or phase-mismatched output falls
+    through to action=none. Unknown ``policy_id`` is dropped to null
+    rather than failing the whole verdict. Deliberately resilient: inputs
+    are untrusted LLM strings.
     """
     if not raw or not isinstance(raw, str):
         return _noop()
@@ -132,7 +141,8 @@ def parse_verdict(raw: str, valid_policy_ids: set[str]) -> EvaluateResponse:
         return _noop()
 
     action = data.get('action')
-    if action not in _VALID_ACTIONS:
+    allowed = _valid_actions_for_phase(phase)
+    if action not in allowed:
         return _noop()
 
     # Normalise: drop unknown policy_ids.
@@ -152,11 +162,10 @@ def parse_verdict(raw: str, valid_policy_ids: set[str]) -> EvaluateResponse:
     if followup_text is not None and not isinstance(followup_text, str):
         followup_text = None
 
-    # Defensive: followup without text is useless; flag without rationale is
-    # worthless. Fall back to none.
+    # Defensive: each non-none action needs its payload to be actionable.
     if action == 'followup' and not (followup_text and followup_text.strip()):
         return _noop()
-    if action == 'flag' and not (rationale and rationale.strip()):
+    if action in ('flag', 'block') and not (rationale and rationale.strip()):
         return _noop()
 
     return EvaluateResponse(
@@ -183,7 +192,7 @@ def _next_demo_index(user_id: str) -> int:
         return n
 
 
-_DEMO_ROTATION = (
+_POST_DEMO_ROTATION = (
     EvaluateResponse(
         action='flag',
         severity='warn',
@@ -197,22 +206,42 @@ _DEMO_ROTATION = (
 )
 
 
+# Hiring-related keywords: used by demo mode to trigger a canonical
+# pre-flight block. Keep the list focused — false positives on pre-flight
+# are worse than false negatives, because they surprise the user.
+_HIRING_KEYWORDS = (
+    'hire ',
+    'hiring',
+    'candidate',
+    'resume',
+    'cv ',
+    'whom to hire',
+    'who to hire',
+    'reject the candidate',
+)
+
+
 def _scripted_verdict(
-    user_id: str, conversation: list[ConversationTurn]
+    user_id: str,
+    conversation: list[ConversationTurn],
+    phase: str = 'post',
 ) -> EvaluateResponse:
     """Produce a demo-mode verdict.
 
-    Triggered by keywords in the latest user message so a demonstrator can
-    target a specific behaviour on cue:
+    Phase-aware so pre-flight demos can show a realistic block. Triggers
+    (checked in order) in the latest user message:
 
-    - ``demo:flag``     → a 'warn' flag.
-    - ``demo:critical`` → a 'critical' flag.
-    - ``demo:followup`` → a coach-authored follow-up message.
+    Pre-flight:
+    - ``demo:block`` or any hiring keyword → ``block``.
+    - ``demo:none``                         → silent no-op.
+    - otherwise                             → ``none``.
+
+    Post-flight:
+    - ``demo:flag``     → 'warn' flag.
+    - ``demo:critical`` → 'critical' flag.
+    - ``demo:followup`` → coach-authored follow-up.
     - ``demo:none``     → silent no-op.
-
-    Anything else rotates flag → followup → none per-user so every third
-    turn exercises a different branch. That rotation is what lets a live
-    demo show all three UI behaviours without memorising trigger words.
+    - otherwise         → rotate flag → followup → none.
     """
     last_user = next(
         (t.content for t in reversed(conversation) if t.role == 'user'),
@@ -222,6 +251,22 @@ def _scripted_verdict(
 
     if 'demo:none' in text:
         return EvaluateResponse(action='none')
+
+    if phase == 'pre':
+        triggered = 'demo:block' in text or any(k in text for k in _HIRING_KEYWORDS)
+        if triggered:
+            return EvaluateResponse(
+                action='block',
+                severity='critical',
+                rationale=(
+                    'This request appears to involve using an LLM for hiring '
+                    'decisions, which your coach policy forbids. Please handle '
+                    'candidate evaluation outside of this assistant.'
+                ),
+            )
+        return EvaluateResponse(action='none')
+
+    # Post-flight demo scripts.
     if 'demo:critical' in text:
         return EvaluateResponse(
             action='flag',
@@ -240,8 +285,8 @@ def _scripted_verdict(
             followup_text='(demo) please add one concrete example to your answer.',
         )
 
-    idx = _next_demo_index(user_id) % len(_DEMO_ROTATION)
-    return _DEMO_ROTATION[idx]
+    idx = _next_demo_index(user_id) % len(_POST_DEMO_ROTATION)
+    return _POST_DEMO_ROTATION[idx]
 
 
 def _policies_snapshot(policies: list[CoachPolicyResponse]) -> list[dict]:
@@ -269,11 +314,16 @@ async def run_core(
     conversation: list[ConversationTurn],
     llm_caller,
     event_sink: Optional[EventSink] = None,
+    phase: str = 'post',
 ) -> EvaluateResponse:
     """Evaluate with fully-resolved inputs; no DB reads.
 
     ``evaluate()`` is the thin wrapper that loads cfg + policies from
     storage; /dry-run reuses this directly with caller-supplied overrides.
+
+    ``phase`` selects post-flight ('post', default — judge the last
+    assistant reply) vs pre-flight ('pre' — screen the pending user
+    query). Allowed verdict actions differ by phase; see parse_verdict.
     """
     trace = EvalTrace(demo=demo_mode)
     trace.conversation = _conversation_snapshot(conversation)
@@ -299,8 +349,12 @@ async def run_core(
     if demo_mode:
         trace.active_policies = _policies_snapshot(policies)
         trace.policy_count = len(policies)
-        verdict = _scripted_verdict(user_id, conversation)
-        if verdict.action == 'followup' and _loop_protection_violated(conversation):
+        verdict = _scripted_verdict(user_id, conversation, phase=phase)
+        if (
+            phase == 'post'
+            and verdict.action == 'followup'
+            and _loop_protection_violated(conversation)
+        ):
             verdict = EvaluateResponse(
                 action='flag',
                 severity='warn',
@@ -318,7 +372,8 @@ async def run_core(
     trace.active_policies = _policies_snapshot(policies)
     trace.policy_count = len(policies)
 
-    messages = build_evaluation_prompt(policies, conversation)
+    prompt_builder = build_preflight_prompt if phase == 'pre' else build_evaluation_prompt
+    messages = prompt_builder(policies, conversation)
     trace.rendered_prompt = messages
     trace.llm_called = True
     trace.model_id = coach_model_id
@@ -331,10 +386,16 @@ async def run_core(
         return emit(_noop())
 
     trace.raw_reply = reply or ''
-    verdict = parse_verdict(reply or '', {p.id for p in policies})
+    verdict = parse_verdict(reply or '', {p.id for p in policies}, phase=phase)
 
-    # Loop protection: never chain a follow-up on top of a coach-authored one.
-    if verdict.action == 'followup' and _loop_protection_violated(conversation):
+    # Loop protection (post only): never chain a followup on top of a
+    # coach-authored user turn. Pre-flight doesn't produce followups so
+    # the rule is inert there.
+    if (
+        phase == 'post'
+        and verdict.action == 'followup'
+        and _loop_protection_violated(conversation)
+    ):
         log.debug('coach: loop-protection downgrade followup → flag')
         return emit(EvaluateResponse(
             action='flag',
@@ -360,6 +421,7 @@ async def evaluate(
     conversation: list[ConversationTurn],
     llm_caller,
     event_sink: Optional[EventSink] = None,
+    phase: str = 'post',
 ) -> EvaluateResponse:
     """Load the user's config + policies and run the core algorithm."""
     cfg = CoachConfigs.get_or_default(user_id)
@@ -376,4 +438,5 @@ async def evaluate(
         conversation=conversation,
         llm_caller=llm_caller,
         event_sink=event_sink,
+        phase=phase,
     )

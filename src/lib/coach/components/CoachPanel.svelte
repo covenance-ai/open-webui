@@ -18,6 +18,7 @@
 
 	import CoachInspector from './CoachInspector.svelte';
 	import CoachPlayground from './CoachPlayground.svelte';
+	import CoachStatusIndicator from './CoachStatusIndicator.svelte';
 	import PolicyEditor from './PolicyEditor.svelte';
 	import PolicyList from './PolicyList.svelte';
 
@@ -220,6 +221,7 @@
 					class="ml-1 text-xs font-normal text-gray-500 dark:text-gray-400"
 				>· {activeIds.length} active</span>
 			{/if}
+			<span class="ml-2"><CoachStatusIndicator /></span>
 		</button>
 		<Switch state={enabled} on:change={onToggleEnabled} tooltip={enabled ? 'On' : 'Off'} />
 	</div>

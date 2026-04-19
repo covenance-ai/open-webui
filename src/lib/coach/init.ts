@@ -13,11 +13,17 @@
 
 import { get } from 'svelte/store';
 import { user } from '$lib/stores';
+import { WEBUI_API_BASE_URL } from '$lib/constants';
 import * as api from './api';
 import { coachConfig } from './stores/config';
 import { refreshCoachEvents } from './stores/events';
 import { coachFlags, setFlag } from './stores/flags';
 import { coachPolicies } from './stores/policies';
+import {
+	flashCoachResult,
+	setCoachBaseState,
+	setCoachProcessing
+} from './stores/status';
 
 let bootstrapped = false;
 let evalWired = false;
@@ -103,9 +109,10 @@ async function onChatFinish(e: Event) {
 	const conv = linearize(detail?.history);
 	if (conv.length === 0) return;
 
+	setCoachProcessing('post');
 	let verdict;
 	try {
-		verdict = await (await fetch(`${location.origin}/api/v1/coach/evaluate`, {
+		verdict = await (await fetch(`${WEBUI_API_BASE_URL}/coach/evaluate`, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
@@ -114,11 +121,13 @@ async function onChatFinish(e: Event) {
 			body: JSON.stringify({
 				chat_id: detail?.chatId ?? null,
 				message_id: detail?.messageId ?? null,
-				conversation: conv
+				conversation: conv,
+				phase: 'post'
 			})
 		})).json();
 	} catch (err) {
 		console.warn('[coach] evaluate failed:', err);
+		flashCoachResult('error');
 		return;
 	} finally {
 		// Refresh the activity log regardless of verdict — error rows are the
@@ -126,7 +135,18 @@ async function onChatFinish(e: Event) {
 		void refreshCoachEvents(token);
 	}
 
-	if (!verdict || verdict.action === 'none') return;
+	// Reflect the verdict in the status indicator.
+	if (!verdict || verdict.action === 'none') {
+		flashCoachResult('ok');
+		return;
+	}
+	if (verdict.action === 'flag') {
+		flashCoachResult('flagged');
+	} else if (verdict.action === 'followup') {
+		flashCoachResult('followed-up');
+	}
+
+	if (verdict.action === 'none') return;
 
 	if (verdict.action === 'flag' && detail?.messageId && verdict.rationale) {
 		setFlag(detail.messageId, {
@@ -180,3 +200,85 @@ user.subscribe((u) => {
 		void bootstrap();
 	}
 });
+
+// Base status mirrors the on/off switch. Transient states (ok / flagged /
+// blocked / error) override this for ~4s then the store reverts to
+// whatever the config currently says.
+coachConfig.subscribe((cfg) => {
+	setCoachBaseState(cfg?.enabled ? 'idle' : 'off');
+});
+
+// ── Pre-flight hook (exposed globally for Chat.svelte injection) ──
+// Resolve true when the pending user query is allowed to proceed; false
+// when coach blocked it. Errors default to allow — fail open rather than
+// fail shut, since a coach outage must not block the chat product.
+
+export interface PreflightVerdict {
+	action: 'none' | 'block' | 'error';
+	rationale?: string | null;
+	policy_id?: string | null;
+}
+
+export async function coachPreflight(
+	userMessage: string,
+	history?: UpstreamHistory
+): Promise<PreflightVerdict> {
+	const token = getToken();
+	if (!token) return { action: 'none' };
+	const cfg = get(coachConfig);
+	const realPathReady = Boolean(
+		cfg?.coach_model_id && (cfg?.active_policy_ids?.length ?? 0) > 0
+	);
+	if (!cfg?.enabled || (!cfg.demo_mode && !realPathReady)) {
+		return { action: 'none' };
+	}
+
+	const prior = linearize(history);
+	const conversation = [
+		...prior,
+		{ role: 'user', content: userMessage, coach_authored: false }
+	];
+
+	setCoachProcessing('pre');
+	let verdict: {
+		action?: string;
+		rationale?: string | null;
+		policy_id?: string | null;
+	};
+	try {
+		const res = await fetch(`${WEBUI_API_BASE_URL}/coach/evaluate`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${token}`
+			},
+			body: JSON.stringify({ conversation, phase: 'pre' })
+		});
+		verdict = await res.json();
+	} catch (err) {
+		console.warn('[coach] preflight failed:', err);
+		flashCoachResult('error');
+		return { action: 'error' };
+	} finally {
+		void refreshCoachEvents(token);
+	}
+
+	if (verdict?.action === 'block') {
+		flashCoachResult('blocked');
+		return {
+			action: 'block',
+			rationale: verdict.rationale ?? null,
+			policy_id: verdict.policy_id ?? null
+		};
+	}
+	flashCoachResult('ok');
+	return { action: 'none' };
+}
+
+// Expose on window for the Chat.svelte injection — keeps the site's
+// change tiny (single anchor) and avoids having Chat.svelte import from
+// coach internals.
+if (typeof window !== 'undefined') {
+	(window as unknown as { coachPreflight: typeof coachPreflight }).coachPreflight =
+		coachPreflight;
+}
