@@ -1,19 +1,32 @@
 <script lang="ts">
-	// Compact status pill for one chat. Renders nothing when that chat has
-	// no active coach event. Caller passes the chatId explicitly (no
-	// fallback to "current chat" — that ambiguity is what the per-chat
-	// refactor was trying to remove).
+	// Per-chat status pill. Shows nothing when coach is globally off
+	// (cfg.enabled=false); otherwise always shows at least 'idle' so the
+	// user sees coach is monitoring this conversation.
+	//
+	// 'idle' is computed here, not stored — there's no persistent "idle"
+	// event to broadcast; it's just the absence of any active per-chat
+	// state combined with coach being on.
 
+	import { coachConfig } from '../stores/config';
 	import { coachStatusByChat, type CoachStatus } from '../stores/status';
 
 	export let chatId: string | null;
 
-	$: status = (chatId && $coachStatusByChat[chatId]) || null;
+	type DisplayStatus = CoachStatus | 'idle';
+
+	$: enabled = $coachConfig?.enabled ?? false;
+	$: chatState = (chatId && $coachStatusByChat[chatId]) || null;
+	$: status = (!enabled ? null : (chatState ?? 'idle')) as DisplayStatus | null;
 
 	const spec: Record<
-		CoachStatus,
+		DisplayStatus,
 		{ glyph: string; label: string; cls: string; spin?: boolean }
 	> = {
+		idle: {
+			glyph: '●',
+			label: 'idle',
+			cls: 'text-emerald-500 dark:text-emerald-400'
+		},
 		'processing-pre': {
 			glyph: '◐',
 			label: 'screening',
@@ -57,9 +70,10 @@
 {#if status}
 	{@const s = spec[status]}
 	<span
-		class="inline-flex items-center gap-1 text-[11px] font-mono {s.cls}"
+		data-coach-status={status}
+		class="inline-flex items-center gap-1 text-[11px] font-mono {s.cls} px-2 py-0.5 rounded-full bg-white/80 dark:bg-gray-900/80 backdrop-blur shadow-sm border border-gray-200/60 dark:border-gray-700/60"
 		aria-live="polite"
-		title="Coach: {s.label} (chat {chatId?.slice(0, 8) ?? ''})"
+		title="Coach: {s.label}{chatId ? ` (chat ${chatId.slice(0, 8)})` : ''}"
 	>
 		<span class={s.spin ? 'coach-spin' : ''}>{s.glyph}</span>
 		<span class="tabular-nums">{s.label}</span>

@@ -2,13 +2,12 @@
 // run belongs to a specific conversation, so a single global pill would
 // constantly thrash whenever there's more than one chat active.
 //
-// Components read either:
-//   - their chat's status from the map (transient, dropped after FLASH_MS),
-//   - or nothing (no entry → no pill).
+// 'idle' is intentionally NOT in this map; it's the implicit absence of
+// any chat-scoped event. Indicators that want to render "coach is on but
+// nothing's happening" should compose this with `coachConfig.enabled`.
 //
-// On/off is *not* a status — it's a config concern (cfg.enabled), already
-// surfaced by the Switch in CoachPanel. Indicators that want to render
-// "coach is off" should consult the config store, not this one.
+// Transient states (ok / flagged / followed-up / blocked / error) flash
+// briefly then drop out; processing states stay until overwritten.
 
 import { writable } from 'svelte/store';
 
@@ -21,9 +20,8 @@ export type CoachStatus =
 	| 'blocked'
 	| 'error';
 
-const FLASH_MS = 4000;
+export const FLASH_MS = 4000;
 
-// Per-chat status map. Chats with no entry have nothing happening.
 export const coachStatusByChat = writable<Record<string, CoachStatus>>({});
 
 const flashTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -68,4 +66,13 @@ export function flashCoachResult(
 		flashTimers.delete(chatId);
 	}, ms);
 	flashTimers.set(chatId, t);
+}
+
+// Test-only helper. Cancels every pending flash timer and clears the map
+// so tests can assert end-state without waiting on FLASH_MS or leaking
+// timers across cases. Production callers must not use this.
+export function _resetCoachStatusForTests() {
+	for (const t of flashTimers.values()) clearTimeout(t);
+	flashTimers.clear();
+	coachStatusByChat.set({});
 }
