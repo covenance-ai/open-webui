@@ -16,34 +16,11 @@
 	import { get } from 'svelte/store';
 	import { onDestroy, onMount } from 'svelte';
 	import { coachFlags, type CoachFlag } from '../stores/flags';
+	import { firstLaidOutRect, rectsEqual, type RectLike } from './rects';
 
-	let positions: Record<string, DOMRect | null> = {};
+	let positions: Record<string, RectLike | null> = {};
 	let observer: MutationObserver | null = null;
 	let rafPending = false;
-
-	function rectsEqual(
-		a: Record<string, DOMRect | null>,
-		b: Record<string, DOMRect | null>
-	) {
-		const ak = Object.keys(a);
-		const bk = Object.keys(b);
-		if (ak.length !== bk.length) return false;
-		for (const k of ak) {
-			const ra = a[k];
-			const rb = b[k];
-			if (ra === rb) continue;
-			if (!ra || !rb) return false;
-			if (
-				ra.top !== rb.top ||
-				ra.left !== rb.left ||
-				ra.width !== rb.width ||
-				ra.height !== rb.height
-			) {
-				return false;
-			}
-		}
-		return true;
-	}
 
 	function remeasure() {
 		const flags = get(coachFlags);
@@ -52,10 +29,10 @@
 			if (Object.keys(positions).length !== 0) positions = {};
 			return;
 		}
-		const next: Record<string, DOMRect | null> = {};
+		const next: Record<string, RectLike | null> = {};
 		for (const id of ids) {
 			const el = document.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
-			next[id] = el ? (el as HTMLElement).getBoundingClientRect() : null;
+			next[id] = firstLaidOutRect(el);
 		}
 		if (!rectsEqual(positions, next)) {
 			positions = next;

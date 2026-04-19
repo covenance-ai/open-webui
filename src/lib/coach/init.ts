@@ -15,7 +15,7 @@ import { get } from 'svelte/store';
 import { user } from '$lib/stores';
 import { WEBUI_API_BASE_URL } from '$lib/constants';
 import * as api from './api';
-import { setApproval } from './stores/approvals';
+import { clearApproval, setApproval } from './stores/approvals';
 import { coachConfig } from './stores/config';
 import { refreshCoachEvents } from './stores/events';
 import { coachFlags, setFlag } from './stores/flags';
@@ -119,6 +119,18 @@ async function onChatFinish(e: Event) {
 	if (conv.length === 0) return;
 
 	setCoachProcessing('post', chatId);
+	// Tag the assistant message with a 'reviewing' chip so the user sees
+	// coach is doing something right now — not just a spinner in the
+	// corner. Cleared after the verdict resolves (or replaced by the
+	// final approval chip on action=none).
+	if (detail?.messageId) {
+		setApproval(detail.messageId, {
+			kind: 'reviewing-post',
+			phase: 'post',
+			policyCount: cfg?.active_policy_ids?.length ?? 0,
+			createdAt: Date.now()
+		});
+	}
 	let verdict;
 	try {
 		verdict = await (await fetch(`${WEBUI_API_BASE_URL}/coach/evaluate`, {
@@ -153,6 +165,7 @@ async function onChatFinish(e: Event) {
 		// at evaluation time is the upper bound.
 		if (detail?.messageId) {
 			setApproval(detail.messageId, {
+				kind: 'approved',
 				phase: 'post',
 				policyCount: cfg?.active_policy_ids?.length ?? 0,
 				createdAt: Date.now()
@@ -160,6 +173,11 @@ async function onChatFinish(e: Event) {
 		}
 		return;
 	}
+
+	// For flag / followup verdicts, the pending 'reviewing-post' badge on
+	// the assistant message becomes misleading. Clear it; the flag
+	// overlay takes over.
+	if (detail?.messageId) clearApproval(detail.messageId);
 	if (verdict.action === 'flag') {
 		flashCoachResult('flagged', chatId);
 	} else if (verdict.action === 'followup') {
@@ -335,34 +353,21 @@ export function composeCoachBlockMarkdown(verdict: PreflightBlockDetail): string
 	return lines.join('\n');
 }
 
-// Mutates `history` in place: appends a user turn for `userPrompt` and a
-// coach-authored assistant turn carrying the block explanation. Returns
-// both ids so the caller can update history.currentId and persist the chat.
-export function coachInsertBlockExchange(
+// Appends a single coach-authored assistant turn as a child of an
+// existing user message. Used when pre-flight blocks: Chat.svelte has
+// already added the user message (so the user sees what they sent),
+// and coach drops an in-thread explanation in place of the LLM reply.
+export function coachAppendBlockMessage(
 	history: UpstreamHistory,
-	userPrompt: string,
-	verdict: PreflightBlockDetail,
-	models: string[]
-): { userMessageId: string; coachMessageId: string } {
+	parentUserMessageId: string,
+	verdict: PreflightBlockDetail
+): { coachMessageId: string } {
 	const ts = Math.floor(Date.now() / 1000);
-	const parentId = history.currentId ?? null;
-
-	const userMessageId = uuidv4();
 	const coachMessageId = uuidv4();
-
-	const userMsg = {
-		id: userMessageId,
-		parentId,
-		childrenIds: [coachMessageId],
-		role: 'user' as const,
-		content: userPrompt,
-		timestamp: ts,
-		models
-	};
 
 	const coachMsg = {
 		id: coachMessageId,
-		parentId: userMessageId,
+		parentId: parentUserMessageId,
 		childrenIds: [],
 		role: 'assistant' as const,
 		content: composeCoachBlockMarkdown(verdict),
@@ -380,27 +385,85 @@ export function coachInsertBlockExchange(
 		}
 	};
 
-	(history.messages as Record<string, unknown>)[userMessageId] = userMsg;
 	(history.messages as Record<string, unknown>)[coachMessageId] = coachMsg;
-	if (parentId && history.messages[parentId]) {
-		const parent = history.messages[parentId] as { childrenIds?: string[] };
-		parent.childrenIds = [...(parent.childrenIds ?? []), userMessageId];
-	}
+	const parent = history.messages[parentUserMessageId] as { childrenIds?: string[] } | undefined;
+	if (parent) parent.childrenIds = [...(parent.childrenIds ?? []), coachMessageId];
 	history.currentId = coachMessageId;
-	return { userMessageId, coachMessageId };
+	return { coachMessageId };
 }
 
-// Lets Chat.svelte mark a freshly-added user message as coach-approved
-// (pre-flight let it through). Post-flight approvals are set by
-// onChatFinish above — Chat.svelte handles the pre case because it
-// owns the user-message id at that moment.
-export function setCoachApproval(messageId: string, phase: 'pre' | 'post'): void {
+// Chat.svelte calls these to drive the per-message chip overlay for
+// the pre-flight phase: mark 'reviewing-pre' as soon as the user msg
+// is added, then either approve (action=none) or clear (blocked).
+export function markCoachReviewingPre(messageId: string): void {
 	const cfg = get(coachConfig);
 	setApproval(messageId, {
-		phase,
+		kind: 'reviewing-pre',
+		phase: 'pre',
 		policyCount: cfg?.active_policy_ids?.length ?? 0,
 		createdAt: Date.now()
 	});
+}
+
+export function markCoachApprovedPre(
+	messageId: string,
+	history?: UpstreamHistory
+): void {
+	const cfg = get(coachConfig);
+	const policyCount = cfg?.active_policy_ids?.length ?? 0;
+	setApproval(messageId, {
+		kind: 'approved',
+		phase: 'pre',
+		policyCount,
+		createdAt: Date.now()
+	});
+	// Write the approval onto the message so the upstream chat-save flow
+	// persists it; on reload coachHydrateFromHistory re-populates the
+	// store. Without this, pre-flight shields would vanish on refresh.
+	if (history?.messages?.[messageId]) {
+		(history.messages[messageId] as unknown as { coach?: unknown }).coach = {
+			type: 'approved',
+			phase: 'pre',
+			policy_count: policyCount,
+			created_at: Math.floor(Date.now() / 1000)
+		};
+	}
+}
+
+export function clearCoachBadge(messageId: string): void {
+	clearApproval(messageId);
+}
+
+// Re-populates coachFlags and coachApprovals from a chat's history that
+// was just loaded from the server. Called once per chat navigation via
+// window.coachHydrateFromHistory (Chat.svelte site).
+export function coachHydrateFromHistory(history: UpstreamHistory | undefined): void {
+	if (!history?.messages) return;
+	for (const [id, raw] of Object.entries(history.messages)) {
+		const msg = raw as { coach?: Record<string, unknown> } | undefined;
+		const c = msg?.coach;
+		if (!c) continue;
+		const type = (c.type as string | undefined) ?? 'flag'; // legacy rows are flags
+		if (type === 'flag') {
+			setFlag(id, {
+				severity: ((c.severity as 'info' | 'warn' | 'critical') ?? 'warn'),
+				rationale: (c.rationale as string) ?? '',
+				policyId: (c.policy_id as string | null) ?? null,
+				createdAt:
+					typeof c.created_at === 'number' ? (c.created_at as number) * 1000 : Date.now()
+			});
+		} else if (type === 'approved') {
+			setApproval(id, {
+				kind: 'approved',
+				phase: (c.phase as 'pre' | 'post') ?? 'post',
+				policyCount: (c.policy_count as number | undefined) ?? 0,
+				createdAt:
+					typeof c.created_at === 'number' ? (c.created_at as number) * 1000 : Date.now()
+			});
+		}
+		// type === 'block' → no overlay; the block message's content
+		// already carries the full explanation.
+	}
 }
 
 // Expose on window for the Chat.svelte injection — keeps the site's
@@ -409,10 +472,16 @@ export function setCoachApproval(messageId: string, phase: 'pre' | 'post'): void
 if (typeof window !== 'undefined') {
 	const w = window as unknown as {
 		coachPreflight: typeof coachPreflight;
-		coachInsertBlockExchange: typeof coachInsertBlockExchange;
-		setCoachApproval: typeof setCoachApproval;
+		coachAppendBlockMessage: typeof coachAppendBlockMessage;
+		markCoachReviewingPre: typeof markCoachReviewingPre;
+		markCoachApprovedPre: typeof markCoachApprovedPre;
+		clearCoachBadge: typeof clearCoachBadge;
+		coachHydrateFromHistory: typeof coachHydrateFromHistory;
 	};
 	w.coachPreflight = coachPreflight;
-	w.coachInsertBlockExchange = coachInsertBlockExchange;
-	w.setCoachApproval = setCoachApproval;
+	w.coachAppendBlockMessage = coachAppendBlockMessage;
+	w.markCoachReviewingPre = markCoachReviewingPre;
+	w.markCoachApprovedPre = markCoachApprovedPre;
+	w.clearCoachBadge = clearCoachBadge;
+	w.coachHydrateFromHistory = coachHydrateFromHistory;
 }

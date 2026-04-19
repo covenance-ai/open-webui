@@ -5,10 +5,16 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { get } from 'svelte/store';
+
+import { _resetCoachApprovalsForTests, coachApprovals } from './stores/approvals';
+import { coachFlags } from './stores/flags';
 import { coachPolicies } from './stores/policies';
 import {
+	coachAppendBlockMessage,
+	coachHydrateFromHistory,
 	composeCoachBlockMarkdown,
-	coachInsertBlockExchange,
+	markCoachApprovedPre,
 	type PreflightBlockDetail
 } from './init';
 
@@ -24,10 +30,14 @@ const HIRING_POLICY = {
 
 beforeEach(() => {
 	coachPolicies.set([HIRING_POLICY]);
+	_resetCoachApprovalsForTests();
+	coachFlags.set({});
 });
 
 afterEach(() => {
 	coachPolicies.set([]);
+	_resetCoachApprovalsForTests();
+	coachFlags.set({});
 });
 
 describe('composeCoachBlockMarkdown', () => {
@@ -58,30 +68,31 @@ describe('composeCoachBlockMarkdown', () => {
 	});
 });
 
-describe('coachInsertBlockExchange', () => {
+describe('coachAppendBlockMessage', () => {
 	const verdict: PreflightBlockDetail = {
 		policy_id: 'pol-hiring',
 		rationale: 'overt hiring decision'
 	};
 
-	it('appends a user msg + coach assistant msg to an empty history', () => {
-		const history = { messages: {}, currentId: null } as never;
-		const { userMessageId, coachMessageId } = coachInsertBlockExchange(
-			history,
-			'Who should I hire?',
-			verdict,
-			['some-model']
-		);
+	it('appends a coach assistant msg as child of the given user msg', () => {
+		const userMessageId = 'user-1';
+		const history = {
+			messages: {
+				[userMessageId]: {
+					id: userMessageId,
+					role: 'user',
+					content: 'Who should I hire?',
+					parentId: null,
+					childrenIds: []
+				}
+			},
+			currentId: userMessageId
+		} as never;
+
+		const { coachMessageId } = coachAppendBlockMessage(history, userMessageId, verdict);
 
 		const h = history as { messages: Record<string, any>; currentId: string | null };
-		expect(Object.keys(h.messages)).toHaveLength(2);
 		expect(h.currentId).toBe(coachMessageId);
-
-		const userMsg = h.messages[userMessageId];
-		expect(userMsg.role).toBe('user');
-		expect(userMsg.content).toBe('Who should I hire?');
-		expect(userMsg.parentId).toBeNull();
-		expect(userMsg.childrenIds).toEqual([coachMessageId]);
 
 		const coachMsg = h.messages[coachMessageId];
 		expect(coachMsg.role).toBe('assistant');
@@ -92,31 +103,139 @@ describe('coachInsertBlockExchange', () => {
 		expect(coachMsg.coach.type).toBe('block');
 		expect(coachMsg.content).toContain('Coach blocked');
 		expect(coachMsg.content).toContain('No LLM for hiring decisions');
+
+		// User message gets the coach reply added as a sibling branch.
+		expect(h.messages[userMessageId].childrenIds).toContain(coachMessageId);
 	});
 
-	it('chains onto the prior currentId, updating its childrenIds', () => {
+	it('preserves existing siblings on the user message', () => {
+		const userMessageId = 'user-1';
 		const history = {
 			messages: {
-				prior: {
-					id: 'prior',
-					role: 'assistant',
-					content: 'earlier reply',
+				[userMessageId]: {
+					id: userMessageId,
+					role: 'user',
+					content: 'hey',
 					parentId: null,
+					childrenIds: ['prior-assistant']
+				},
+				'prior-assistant': {
+					id: 'prior-assistant',
+					role: 'assistant',
+					content: 'earlier',
+					parentId: userMessageId,
 					childrenIds: []
 				}
 			},
-			currentId: 'prior'
+			currentId: userMessageId
 		} as never;
-		const { userMessageId, coachMessageId } = coachInsertBlockExchange(
-			history,
-			'follow-up that violates policy',
-			verdict,
-			[]
-		);
+
+		const { coachMessageId } = coachAppendBlockMessage(history, userMessageId, verdict);
 
 		const h = history as { messages: Record<string, any>; currentId: string | null };
-		expect(h.messages.prior.childrenIds).toContain(userMessageId);
-		expect(h.messages[userMessageId].parentId).toBe('prior');
-		expect(h.currentId).toBe(coachMessageId);
+		expect(h.messages[userMessageId].childrenIds).toEqual(['prior-assistant', coachMessageId]);
+	});
+});
+
+describe('markCoachApprovedPre', () => {
+	it('writes the approval onto history.messages[id].coach for later persistence', () => {
+		const history = {
+			messages: {
+				'msg-1': { id: 'msg-1', role: 'user', content: 'hi', parentId: null, childrenIds: [] }
+			},
+			currentId: 'msg-1'
+		} as never;
+		markCoachApprovedPre('msg-1', history);
+		const h = history as { messages: Record<string, any> };
+		expect(h.messages['msg-1'].coach).toBeDefined();
+		expect(h.messages['msg-1'].coach.type).toBe('approved');
+		expect(h.messages['msg-1'].coach.phase).toBe('pre');
+		// Store also updated.
+		expect(get(coachApprovals)['msg-1'].kind).toBe('approved');
+	});
+
+	it('skips history mutation when message is unknown — still updates the store', () => {
+		const history = { messages: {}, currentId: null } as never;
+		markCoachApprovedPre('msg-missing', history);
+		expect(get(coachApprovals)['msg-missing'].kind).toBe('approved');
+	});
+});
+
+describe('coachHydrateFromHistory', () => {
+	it('rebuilds coachApprovals from history.messages[id].coach entries', () => {
+		const history = {
+			messages: {
+				'user-1': {
+					role: 'user',
+					content: 'hi',
+					coach: { type: 'approved', phase: 'pre', policy_count: 2, created_at: 1000 }
+				},
+				'asst-1': {
+					role: 'assistant',
+					content: 'ok',
+					coach: { type: 'approved', phase: 'post', policy_count: 2, created_at: 1001 }
+				}
+			},
+			currentId: 'asst-1'
+		} as never;
+
+		coachHydrateFromHistory(history);
+		const approvals = get(coachApprovals);
+		expect(approvals['user-1'].phase).toBe('pre');
+		expect(approvals['asst-1'].phase).toBe('post');
+		expect(approvals['user-1'].kind).toBe('approved');
+	});
+
+	it('rebuilds coachFlags from type=flag entries (and legacy no-type rows)', () => {
+		const history = {
+			messages: {
+				'asst-typed': {
+					role: 'assistant',
+					content: 'reply',
+					coach: { type: 'flag', severity: 'warn', rationale: 'r', policy_id: 'p1' }
+				},
+				'asst-legacy': {
+					role: 'assistant',
+					content: 'reply',
+					// No `type` — old rows written before the field existed.
+					coach: { severity: 'critical', rationale: 'old', policy_id: 'p2' }
+				}
+			},
+			currentId: 'asst-typed'
+		} as never;
+
+		coachHydrateFromHistory(history);
+		const flags = get(coachFlags);
+		expect(flags['asst-typed'].severity).toBe('warn');
+		expect(flags['asst-legacy'].severity).toBe('critical');
+	});
+
+	it('ignores messages without a coach field and handles empty history', () => {
+		coachHydrateFromHistory(undefined);
+		expect(get(coachApprovals)).toEqual({});
+
+		const history = {
+			messages: { 'plain-msg': { role: 'user', content: 'hi' } },
+			currentId: 'plain-msg'
+		} as never;
+		coachHydrateFromHistory(history);
+		expect(get(coachApprovals)).toEqual({});
+		expect(get(coachFlags)).toEqual({});
+	});
+
+	it('type=block is not mirrored into either store (content speaks for itself)', () => {
+		const history = {
+			messages: {
+				'block-msg': {
+					role: 'assistant',
+					content: '🛑 Coach blocked',
+					coach: { type: 'block', policy_id: 'p1', rationale: 'r' }
+				}
+			},
+			currentId: 'block-msg'
+		} as never;
+		coachHydrateFromHistory(history);
+		expect(get(coachApprovals)).toEqual({});
+		expect(get(coachFlags)).toEqual({});
 	});
 });

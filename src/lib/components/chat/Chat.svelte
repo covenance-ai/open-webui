@@ -1383,6 +1383,10 @@
 				autoScroll = true;
 				await tick();
 
+				// [coach] Rebuild flag + approval stores from the message.coach
+				// fields that were persisted on previous turns.
+				(window)?.coachHydrateFromHistory?.(history);
+
 				if (history.currentId) {
 					for (const message of Object.values(history.messages)) {
 						if (
@@ -1859,7 +1863,7 @@
 	// Chat functions
 	//////////////////////////
 
-	const submitPrompt = async (inputContent, inputFiles) => {
+	const submitPrompt = async (inputContent, inputFiles, opts: { skipSend?: boolean } = {}) => {
 		const _files = structuredClone(inputFiles);
 
 		chatFiles.push(
@@ -1905,59 +1909,24 @@
 
 		saveSessionSelectedModels();
 
-		await sendMessage(history, userMessageId);
+		// [coach] When coach's pre-flight screen wants to run, it needs the
+		// user message to be in history (so it's visible and can be badged)
+		// but without the LLM having been dispatched yet — otherwise a block
+		// verdict can't prevent the LLM call. submitHandler passes
+		// skipSend=true, runs preflight, then calls sendMessage itself.
+		if (!opts.skipSend) {
+			await sendMessage(history, userMessageId);
+		}
 
-		// [coach] Return the new userMessageId so submitHandler can attach
-		// approval metadata (per-message shield) without needing to dig
-		// through history.
 		return userMessageId;
 	};
 
 	const submitHandler = async (userPrompt, { _raw = false } = {}) => {
 		console.log('submitHandler', userPrompt, $chatId);
 
-		// [coach] Pre-flight policy screen. window.coachPreflight is installed
-		// by src/lib/coach/init.ts; if coach decides the query would violate
-		// a policy (e.g. "no LLM for hiring decisions"), we render a coach-
-		// authored block message in place of the LLM reply (so the user can
-		// read the rule + rationale without time pressure).
-		let coachPreflightVerdict = null;
-		const coachPreflight = (window)?.coachPreflight;
-		if (typeof coachPreflight === 'function' && userPrompt) {
-			coachPreflightVerdict = await coachPreflight(userPrompt, history, $chatId);
-			if (coachPreflightVerdict?.action === 'block') {
-				const insertBlock = (window)?.coachInsertBlockExchange;
-				if (typeof insertBlock === 'function') {
-					const { coachMessageId } = insertBlock(
-						history,
-						userPrompt,
-						coachPreflightVerdict,
-						selectedModels
-					);
-					messageInput?.setText('');
-					prompt = '';
-					files = [];
-					if (!$temporaryChatEnabled && $chatId) {
-						try {
-							chat = await updateChatById(localStorage.token, $chatId, {
-								models: selectedModels,
-								messages: createMessagesList(history, coachMessageId),
-								history,
-								params,
-								files: chatFiles
-							});
-						} catch (err) {
-							console.warn('[coach] failed to persist block exchange:', err);
-						}
-					}
-					await tick();
-					if (autoScroll) scrollToBottom();
-				} else {
-					toast.error(`Coach blocked: ${coachPreflightVerdict.rationale ?? 'policy violation'}`);
-				}
-				return;
-			}
-		}
+		// [coach] Moved below: pre-flight now runs AFTER we append the user
+		// message to history, so the user sees their own text immediately
+		// while coach is screening — no perceived "waiting on coach" lag.
 
 		const _selectedModels = selectedModels.map((modelId) =>
 			$models.map((m) => m.id).includes(modelId) ? modelId : ''
@@ -2044,18 +2013,52 @@
 		files = [];
 		messageInput?.setText('');
 
-		const userMessageId = await submitPrompt(userPrompt, _files);
+		// [coach] Append user message to history WITHOUT dispatching to the
+		// LLM (skipSend=true), so the user sees their own text instantly
+		// while coach's pre-flight screen runs. If coach blocks, we append
+		// a coach-authored assistant reply and never hit the LLM. If coach
+		// passes (or is off/errored), we dispatch to the LLM below.
+		const userMessageId = await submitPrompt(userPrompt, _files, { skipSend: true });
 
-		// [coach] If pre-flight ran and let this query through, mark the
-		// new user message as coach-approved so BadgeOverlay can render
-		// a green shield. action='none' covers both "coach was off" and
-		// "coach reviewed and passed"; we only badge the latter.
-		if (coachPreflightVerdict?.action === 'none' && coachPreflightVerdict.evaluated) {
-			const setApproval = (window)?.setCoachApproval;
-			if (typeof setApproval === 'function' && userMessageId) {
-				setApproval(userMessageId, 'pre');
+		const coachPreflight = (window)?.coachPreflight;
+		if (typeof coachPreflight === 'function' && userPrompt && userMessageId) {
+			(window)?.markCoachReviewingPre?.(userMessageId);
+			await tick();
+			const coachPreflightVerdict = await coachPreflight(userPrompt, history, $chatId);
+			if (coachPreflightVerdict?.action === 'block') {
+				(window)?.clearCoachBadge?.(userMessageId);
+				const appendBlock = (window)?.coachAppendBlockMessage;
+				if (typeof appendBlock === 'function') {
+					const { coachMessageId } = appendBlock(history, userMessageId, coachPreflightVerdict);
+					if (!$temporaryChatEnabled && $chatId) {
+						try {
+							chat = await updateChatById(localStorage.token, $chatId, {
+								models: selectedModels,
+								messages: createMessagesList(history, coachMessageId),
+								history,
+								params,
+								files: chatFiles
+							});
+						} catch (err) {
+							console.warn('[coach] failed to persist block exchange:', err);
+						}
+					}
+					await tick();
+					if (autoScroll) scrollToBottom();
+				} else {
+					toast.error(`Coach blocked: ${coachPreflightVerdict.rationale ?? 'policy violation'}`);
+				}
+				return;
+			}
+			if (coachPreflightVerdict?.action === 'none' && coachPreflightVerdict.evaluated) {
+				(window)?.markCoachApprovedPre?.(userMessageId, history);
+			} else {
+				// coach was off, or it errored (fail-open). Nothing to badge.
+				(window)?.clearCoachBadge?.(userMessageId);
 			}
 		}
+
+		await sendMessage(history, userMessageId);
 	};
 
 	const sendMessage = async (

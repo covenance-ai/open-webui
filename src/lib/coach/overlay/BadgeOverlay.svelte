@@ -12,34 +12,11 @@
 	import { get } from 'svelte/store';
 
 	import { coachApprovals, type CoachApproval } from '../stores/approvals';
+	import { firstLaidOutRect, rectsEqual, type RectLike } from './rects';
 
-	let positions: Record<string, DOMRect | null> = {};
+	let positions: Record<string, RectLike | null> = {};
 	let observer: MutationObserver | null = null;
 	let rafPending = false;
-
-	function rectsEqual(
-		a: Record<string, DOMRect | null>,
-		b: Record<string, DOMRect | null>
-	) {
-		const ak = Object.keys(a);
-		const bk = Object.keys(b);
-		if (ak.length !== bk.length) return false;
-		for (const k of ak) {
-			const ra = a[k];
-			const rb = b[k];
-			if (ra === rb) continue;
-			if (!ra || !rb) return false;
-			if (
-				ra.top !== rb.top ||
-				ra.left !== rb.left ||
-				ra.width !== rb.width ||
-				ra.height !== rb.height
-			) {
-				return false;
-			}
-		}
-		return true;
-	}
 
 	function remeasure() {
 		const approvals = get(coachApprovals);
@@ -48,10 +25,10 @@
 			if (Object.keys(positions).length !== 0) positions = {};
 			return;
 		}
-		const next: Record<string, DOMRect | null> = {};
+		const next: Record<string, RectLike | null> = {};
 		for (const id of ids) {
 			const el = document.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
-			next[id] = el ? (el as HTMLElement).getBoundingClientRect() : null;
+			next[id] = firstLaidOutRect(el);
 		}
 		if (!rectsEqual(positions, next)) {
 			positions = next;
@@ -84,9 +61,24 @@
 	});
 
 	function tooltipFor(a: CoachApproval): string {
-		const phase = a.phase === 'pre' ? 'screened your query' : 'reviewed the reply';
+		const subject = a.phase === 'pre' ? 'your query' : 'the reply';
 		const pols = a.policyCount === 1 ? '1 policy' : `${a.policyCount} policies`;
-		return `Coach ${phase} against ${pols}; nothing flagged.`;
+		if (a.kind === 'reviewing-pre' || a.kind === 'reviewing-post') {
+			return `Coach is reviewing ${subject} against ${pols}…`;
+		}
+		return `Coach reviewed ${subject} against ${pols}; nothing flagged.`;
+	}
+
+	function chipClass(a: CoachApproval): string {
+		if (a.kind === 'reviewing-pre' || a.kind === 'reviewing-post') {
+			return 'bg-amber-50 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700';
+		}
+		return 'bg-emerald-50 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700';
+	}
+
+	function glyphFor(a: CoachApproval): string {
+		if (a.kind === 'reviewing-pre' || a.kind === 'reviewing-post') return '◐';
+		return '🛡';
 	}
 </script>
 
@@ -96,14 +88,35 @@
 		<div
 			style="position: fixed; top: {rect.top + 4}px; left: {rect.right - 4}px; transform: translateX(-100%); z-index: 39;"
 			class="pointer-events-auto"
+			data-coach-badge={approval.kind}
 		>
 			<span
 				title={tooltipFor(approval)}
-				class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-emerald-50 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700 text-[11px] shadow-sm cursor-default select-none"
+				class="inline-flex items-center justify-center w-5 h-5 rounded-full {chipClass(
+					approval
+				)} text-[11px] shadow-sm cursor-default select-none"
 				aria-label={tooltipFor(approval)}
 			>
-				🛡
+				<span
+					class={approval.kind === 'reviewing-pre' || approval.kind === 'reviewing-post'
+						? 'coach-spin inline-block'
+						: ''}
+				>{glyphFor(approval)}</span>
 			</span>
 		</div>
 	{/if}
 {/each}
+
+<style>
+	@keyframes coach-spin {
+		from {
+			transform: rotate(0deg);
+		}
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	.coach-spin {
+		animation: coach-spin 1s linear infinite;
+	}
+</style>

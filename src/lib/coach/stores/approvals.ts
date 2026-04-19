@@ -1,18 +1,19 @@
-// Per-message coach-approval store. Mirrors the shape of `coachFlags`:
-// keyed by messageId, populated when coach reviews a turn and decides
-// it's fine. Drives the green-shield BadgeOverlay.
+// Per-message coach state store. Keyed by messageId, drives the chip
+// overlay (BadgeOverlay). States:
+//   - 'reviewing-pre'  → coach is screening the user query right now
+//   - 'reviewing-post' → coach is reviewing the assistant reply right now
+//   - 'approved'       → coach looked and found nothing to flag
 //
-// Two phases trigger an approval:
-//   - 'pre'  → coach screened the user query and let it through.
-//   - 'post' → coach reviewed the assistant reply and didn't flag it.
-//
-// We deliberately don't persist these into chat JSON: a green shield is
-// a "we looked, all clear" signal that should reflect the *current*
-// policy set, not stale judgements from when the chat was first sent.
+// Flags (critical / warn) live in the separate coachFlags store so the
+// severity styling stays centralized there. This store covers only the
+// benign path: we were looking, we're done, all clear.
 
 import { writable } from 'svelte/store';
 
+export type CoachApprovalKind = 'reviewing-pre' | 'reviewing-post' | 'approved';
+
 export interface CoachApproval {
+	kind: CoachApprovalKind;
 	phase: 'pre' | 'post';
 	policyCount: number;
 	createdAt: number;

@@ -175,11 +175,14 @@ async def _call_coach_llm(
     return content, tokens_in, tokens_out
 
 
-def _persist_flag(chat_id: str, message_id: str, user_id: str, verdict: EvaluateResponse) -> None:
-    """Patch chat.chat.history.messages[message_id].coach with the flag details.
+def _persist_coach_annotation(
+    chat_id: str, message_id: str, user_id: str, annotation: dict
+) -> None:
+    """Patch chat.chat.history.messages[message_id].coach = annotation.
 
-    Silently no-ops if the chat / message cannot be found — this is a
-    post-hoc annotation and losing it on a race is acceptable.
+    Symmetric for flag and approved verdicts. Silently no-ops if the
+    chat or message can't be located — post-hoc annotation losing a
+    race to a chat delete is acceptable.
     """
     chat = Chats.get_chat_by_id_and_user_id(chat_id, user_id)
     if chat is None:
@@ -188,17 +191,40 @@ def _persist_flag(chat_id: str, message_id: str, user_id: str, verdict: Evaluate
     history = chat_json.setdefault('history', {})
     messages = history.setdefault('messages', {})
     if message_id not in messages:
-        # Message isn't in the saved chat yet (race between client save and
-        # evaluate). Skip persistence; the transient frontend store still
-        # shows the flag for this session.
         return
-    messages[message_id]['coach'] = {
-        'severity': verdict.severity or 'warn',
-        'rationale': verdict.rationale,
-        'policy_id': verdict.policy_id,
-        'created_at': int(time.time()),
-    }
+    messages[message_id]['coach'] = annotation
     Chats.update_chat_by_id(chat_id, chat_json)
+
+
+def _persist_flag(chat_id: str, message_id: str, user_id: str, verdict: EvaluateResponse) -> None:
+    _persist_coach_annotation(
+        chat_id,
+        message_id,
+        user_id,
+        {
+            'type': 'flag',
+            'severity': verdict.severity or 'warn',
+            'rationale': verdict.rationale,
+            'policy_id': verdict.policy_id,
+            'created_at': int(time.time()),
+        },
+    )
+
+
+def _persist_approval(
+    chat_id: str, message_id: str, user_id: str, phase: str, policy_count: int
+) -> None:
+    _persist_coach_annotation(
+        chat_id,
+        message_id,
+        user_id,
+        {
+            'type': 'approved',
+            'phase': phase,
+            'policy_count': policy_count,
+            'created_at': int(time.time()),
+        },
+    )
 
 
 def _status_label(trace: coach_service.EvalTrace) -> str:
@@ -260,18 +286,24 @@ async def evaluate(
     duration_ms = int((time.monotonic() - t0) * 1000)
     trace = trace_holder.get('trace') or coach_service.EvalTrace()
 
-    # Only post-flight flags get persisted into chat history. Pre-flight
-    # verdicts refer to a message that hasn't been sent yet.
-    if (
-        body.phase == 'post'
-        and verdict.action == 'flag'
-        and body.chat_id
-        and body.message_id
-    ):
+    # Persist post-flight annotations into chat history so reload shows
+    # the same state. Pre-flight verdicts refer to a message that hasn't
+    # been sent yet; the frontend handles pre-flight badge persistence
+    # by writing directly into history.messages[id].coach before save.
+    if body.phase == 'post' and body.chat_id and body.message_id and trace.llm_called:
         try:
-            _persist_flag(body.chat_id, body.message_id, user.id, verdict)
+            if verdict.action == 'flag':
+                _persist_flag(body.chat_id, body.message_id, user.id, verdict)
+            elif verdict.action == 'none':
+                _persist_approval(
+                    body.chat_id,
+                    body.message_id,
+                    user.id,
+                    phase='post',
+                    policy_count=trace.policy_count or 0,
+                )
         except Exception as exc:
-            log.warning('coach: persist_flag failed: %s', exc)
+            log.warning('coach: persist annotation failed: %s', exc)
 
     status_label = _status_label(trace)
 
