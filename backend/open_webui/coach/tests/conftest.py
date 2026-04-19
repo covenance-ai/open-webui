@@ -42,11 +42,12 @@ def _bootstrap_schema():
 
 @pytest.fixture()
 def fresh_db():
-    """Truncate coach_config between tests so each starts from empty."""
-    from open_webui.coach.models import CoachConfig
+    """Truncate coach_config + coach_policy between tests so each starts empty."""
+    from open_webui.coach.models import CoachConfig, CoachPolicy
     from open_webui.internal.db import get_db
 
     with get_db() as db:
         db.query(CoachConfig).delete()
+        db.query(CoachPolicy).delete()
         db.commit()
     yield

@@ -17,9 +17,33 @@ def test_get_autocreates_default(fresh_db):
     assert cfg.user_id == 'u1'
     assert cfg.enabled is False
     assert cfg.coach_model_id is None
-    assert cfg.active_policy_ids == []
+    # On a clean library we seed one default shared policy ("No LLM for hiring
+    # decisions") and pre-activate it so toggling coach on isn't a silent no-op.
+    assert len(cfg.active_policy_ids) == 1
     assert isinstance(cfg.created_at, int)
     assert cfg.created_at > 0
+
+
+def test_get_autocreates_picks_up_env_default_model(fresh_db, monkeypatch):
+    """COACH_DEFAULT_MODEL_ID populates the seeded coach_model_id."""
+    monkeypatch.setenv('COACH_DEFAULT_MODEL_ID', 'openrouter/anthropic/claude-haiku-4.5')
+    from open_webui.coach.storage import CoachConfigs
+
+    cfg = CoachConfigs.get_or_default('u-env')
+    assert cfg.coach_model_id == 'openrouter/anthropic/claude-haiku-4.5'
+
+
+def test_default_seed_is_idempotent_across_users(fresh_db):
+    """Two new users share the same seeded policy, not duplicates."""
+    from open_webui.coach.storage import CoachConfigs, CoachPolicies
+
+    cfg1 = CoachConfigs.get_or_default('u-a')
+    cfg2 = CoachConfigs.get_or_default('u-b')
+
+    # Both users land on the same seeded policy id.
+    assert cfg1.active_policy_ids == cfg2.active_policy_ids
+    shared = [p for p in CoachPolicies.list_visible('u-a') if p.is_shared]
+    assert len(shared) == 1
 
 
 def test_get_is_idempotent(fresh_db):
@@ -48,7 +72,6 @@ def test_upsert_persists_fields(fresh_db):
     cfg = CoachConfigs.get_or_default('u1')
     assert cfg.enabled is True
     assert cfg.coach_model_id == 'gpt-5.4-mini'
-    assert cfg.active_policy_ids == []
 
 
 def test_upsert_partial_leaves_unset_fields_unchanged(fresh_db):

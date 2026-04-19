@@ -92,6 +92,12 @@ async function onChatFinish(e: Event) {
 	const token = getToken();
 	if (!token) return;
 	const cfg = get(coachConfig);
+	const detail = (e as CustomEvent).detail as {
+		chatId?: string | null;
+		messageId?: string;
+		history?: UpstreamHistory;
+	};
+	const chatId = detail?.chatId ?? null;
 	// Gate: coach must be enabled, and either demo_mode on (scripted verdicts,
 	// no model/policy needed) or the real path fully configured.
 	const realPathReady = Boolean(
@@ -101,15 +107,10 @@ async function onChatFinish(e: Event) {
 		return;
 	}
 
-	const detail = (e as CustomEvent).detail as {
-		chatId?: string | null;
-		messageId?: string;
-		history?: UpstreamHistory;
-	};
 	const conv = linearize(detail?.history);
 	if (conv.length === 0) return;
 
-	setCoachProcessing('post');
+	setCoachProcessing('post', chatId);
 	let verdict;
 	try {
 		verdict = await (await fetch(`${WEBUI_API_BASE_URL}/coach/evaluate`, {
@@ -119,7 +120,7 @@ async function onChatFinish(e: Event) {
 				Authorization: `Bearer ${token}`
 			},
 			body: JSON.stringify({
-				chat_id: detail?.chatId ?? null,
+				chat_id: chatId,
 				message_id: detail?.messageId ?? null,
 				conversation: conv,
 				phase: 'post'
@@ -127,7 +128,7 @@ async function onChatFinish(e: Event) {
 		})).json();
 	} catch (err) {
 		console.warn('[coach] evaluate failed:', err);
-		flashCoachResult('error');
+		flashCoachResult('error', chatId);
 		return;
 	} finally {
 		// Refresh the activity log regardless of verdict — error rows are the
@@ -137,13 +138,13 @@ async function onChatFinish(e: Event) {
 
 	// Reflect the verdict in the status indicator.
 	if (!verdict || verdict.action === 'none') {
-		flashCoachResult('ok');
+		flashCoachResult('ok', chatId);
 		return;
 	}
 	if (verdict.action === 'flag') {
-		flashCoachResult('flagged');
+		flashCoachResult('flagged', chatId);
 	} else if (verdict.action === 'followup') {
-		flashCoachResult('followed-up');
+		flashCoachResult('followed-up', chatId);
 	}
 
 	if (verdict.action === 'none') return;
@@ -221,7 +222,8 @@ export interface PreflightVerdict {
 
 export async function coachPreflight(
 	userMessage: string,
-	history?: UpstreamHistory
+	history?: UpstreamHistory,
+	chatId?: string | null
 ): Promise<PreflightVerdict> {
 	const token = getToken();
 	if (!token) return { action: 'none' };
@@ -239,7 +241,8 @@ export async function coachPreflight(
 		{ role: 'user', content: userMessage, coach_authored: false }
 	];
 
-	setCoachProcessing('pre');
+	const scope = chatId ?? null;
+	setCoachProcessing('pre', scope);
 	let verdict: {
 		action?: string;
 		rationale?: string | null;
@@ -252,26 +255,26 @@ export async function coachPreflight(
 				'Content-Type': 'application/json',
 				Authorization: `Bearer ${token}`
 			},
-			body: JSON.stringify({ conversation, phase: 'pre' })
+			body: JSON.stringify({ chat_id: scope, conversation, phase: 'pre' })
 		});
 		verdict = await res.json();
 	} catch (err) {
 		console.warn('[coach] preflight failed:', err);
-		flashCoachResult('error');
+		flashCoachResult('error', scope);
 		return { action: 'error' };
 	} finally {
 		void refreshCoachEvents(token);
 	}
 
 	if (verdict?.action === 'block') {
-		flashCoachResult('blocked');
+		flashCoachResult('blocked', scope);
 		return {
 			action: 'block',
 			rationale: verdict.rationale ?? null,
 			policy_id: verdict.policy_id ?? null
 		};
 	}
-	flashCoachResult('ok');
+	flashCoachResult('ok', scope);
 	return { action: 'none' };
 }
 

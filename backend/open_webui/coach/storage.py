@@ -1,5 +1,6 @@
 """Access objects for coach_config and coach_policy."""
 
+import os
 import time
 import uuid
 from typing import Optional
@@ -17,21 +18,63 @@ from open_webui.coach.schemas import (
 from open_webui.internal.db import get_db_context
 
 
+# Seeded once on first config creation so that "enable coach" alone is enough
+# for the demo-day scenario. Admins can edit, share/unshare, or delete it.
+DEFAULT_HIRING_POLICY_TITLE = 'No LLM for hiring decisions'
+DEFAULT_HIRING_POLICY_BODY = (
+    'This assistant must not be used for hiring-related decisions, '
+    'including screening candidates, choosing whom to hire, or ranking '
+    'résumés. Redirect users to handle hiring outside of this tool.'
+)
+
+
+def _ensure_default_shared_policies(db: Session) -> list[str]:
+    """If zero shared policies exist, seed the canonical hiring policy.
+
+    Returns the ids of all currently-shared policies (so the caller can
+    pre-activate them in a fresh user's config).
+    """
+    shared = db.query(CoachPolicy).filter(CoachPolicy.is_shared.is_(True)).all()
+    if not shared:
+        now = int(time.time())
+        seed = CoachPolicy(
+            id=str(uuid.uuid4()),
+            user_id=None,
+            is_shared=True,
+            title=DEFAULT_HIRING_POLICY_TITLE,
+            body=DEFAULT_HIRING_POLICY_BODY,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(seed)
+        db.flush()  # so seed.id is queryable in the same transaction
+        shared = [seed]
+    return [p.id for p in shared]
+
+
 class CoachConfigTable:
     def get_or_default(
         self, user_id: str, db: Optional[Session] = None
     ) -> CoachConfigResponse:
-        """Return this user's config, creating a disabled default row if absent."""
+        """Return this user's config, creating a default row if absent.
+
+        On creation we pre-seed `active_policy_ids` with all shared
+        policies (auto-creating a canonical hiring policy if the library
+        is empty) and pull `coach_model_id` from $COACH_DEFAULT_MODEL_ID.
+        Without this, "enable coach" alone is a silent no-op because
+        active_policy_ids is empty and the frontend gates on it.
+        """
         with get_db_context(db) as db:
             row = db.query(CoachConfig).filter_by(user_id=user_id).first()
             if row is None:
                 now = int(time.time())
+                shared_ids = _ensure_default_shared_policies(db)
                 row = CoachConfig(
                     user_id=user_id,
                     enabled=False,
                     demo_mode=False,
-                    coach_model_id=None,
-                    active_policy_ids=[],
+                    coach_model_id=os.environ.get('COACH_DEFAULT_MODEL_ID') or None,
+                    active_policy_ids=shared_ids,
                     created_at=now,
                     updated_at=now,
                 )

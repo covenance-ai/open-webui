@@ -62,6 +62,11 @@ check "Messages.svelte data-message-id" \
   "src/lib/components/chat/Messages.svelte" \
   "data-message-id" 1
 
+# Site 7 — main.py OPENAI_API_CONFIGS seed (import + call)
+check "main.py seed_openai_api_configs" \
+  "backend/open_webui/main.py" \
+  "seed_openai_api_configs" 2
+
 echo
 if [[ "$fail" -eq 0 ]]; then
   echo "All Coach anchors present."

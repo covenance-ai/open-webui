@@ -201,6 +201,31 @@ Grep anchor: `grep -nF "data-message-id" src/lib/components/chat/Messages/Messag
 
 ---
 
+## Site 7 — `backend/open_webui/main.py` (OPENAI_API_CONFIGS seed)
+
+**What**: seed a curated per-connection model allowlist on startup so fresh
+installs don't show every upstream model. Logic lives in
+`backend/open_webui/coach/config_seed.py` and is keyed by provider base URL.
+Idempotent: only writes when the current config is empty.
+
+**Anchor**: the existing `app.state.config.OPENAI_API_CONFIGS = OPENAI_API_CONFIGS`
+line (~line 778) in the OpenAI state-init block.
+
+Change:
+```python
+# (imports near the other coach import around line 101)
+from open_webui.coach.router import router as coach_router  # [coach]
+from open_webui.coach.config_seed import seed_openai_api_configs  # [coach]
+
+# (state init around line 778)
+app.state.config.OPENAI_API_CONFIGS = OPENAI_API_CONFIGS
+seed_openai_api_configs(app)  # [coach]
+```
+
+Grep anchor: `grep -nF "seed_openai_api_configs" backend/open_webui/main.py` returns 2 lines.
+
+---
+
 ## Site 6 — `our_webui/deploy.sh` (build our fork)
 
 **What**: replace the ghcr.io proxy with an Artifact Registry repo we own,

@@ -1,21 +1,30 @@
 <script lang="ts">
-	// A compact status pill bound to the `coachStatus` store.
+	// Compact status pill. Bound to either an explicit `chatId` prop or, when
+	// omitted, to the upstream `chatId` store. With no chat in scope falls
+	// back to the global base state ('off' or 'idle').
 	//
-	// Each state has a distinct colour + glyph so the eye picks them up in
-	// peripheral vision:
-	//   off            — empty circle, muted
-	//   idle           — green dot (steady)
-	//   processing-pre — amber spinner with "pre"
-	//   processing-post— amber spinner with "post"
-	//   ok             — green thumbs-up (flashes ~4s)
-	//   flagged        — amber warning (flashes)
-	//   followed-up    — blue arrow-return (flashes)
-	//   blocked        — red shield (flashes)
-	//   error          — red X (flashes)
+	// Keep one component used in two slots: the sidebar (global) and inline
+	// inside a chat view (per-conversation).
 
-	import { coachStatus, type CoachStatus } from '../stores/status';
+	import { chatId as currentChatId } from '$lib/stores';
 
-	$: status = $coachStatus as CoachStatus;
+	import {
+		coachBaseState,
+		coachStatusByChat,
+		lastActiveChatId,
+		type CoachStatus
+	} from '../stores/status';
+
+	// When undefined: prefer the route's chatId; if that's empty, surface the
+	// most-recently-touched chat so the pill doesn't go dim during navigation.
+	export let chatId: string | null | undefined = undefined;
+	// `inline` slightly tightens spacing for use inside the composer.
+	export let inline = false;
+
+	$: resolvedChatId =
+		chatId !== undefined ? chatId : ($currentChatId || $lastActiveChatId || null);
+	$: status = ((resolvedChatId && $coachStatusByChat[resolvedChatId]) ||
+		$coachBaseState) as CoachStatus;
 
 	// One source of truth for styling so the legend in COACH.md lines up.
 	const spec: Record<
@@ -75,9 +84,11 @@
 </script>
 
 <span
-	class="inline-flex items-center gap-1 text-[11px] font-mono {s.cls}"
+	class="inline-flex items-center gap-1 font-mono {inline
+		? 'text-[10px]'
+		: 'text-[11px]'} {s.cls}"
 	aria-live="polite"
-	title="Coach status: {s.label}"
+	title="Coach status: {s.label}{resolvedChatId ? ` (chat ${resolvedChatId.slice(0, 8)})` : ''}"
 >
 	<span class={s.spin ? 'coach-spin' : ''}>{s.glyph}</span>
 	<span class="tabular-nums">{s.label}</span>

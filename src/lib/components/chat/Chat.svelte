@@ -1917,7 +1917,7 @@
 		// surface the rationale instead of sending the query to the LLM.
 		const coachPreflight = (window)?.coachPreflight;
 		if (typeof coachPreflight === 'function' && userPrompt) {
-			const verdict = await coachPreflight(userPrompt, history);
+			const verdict = await coachPreflight(userPrompt, history, $chatId);
 			if (verdict?.action === 'block') {
 				toast.error(`Coach blocked: ${verdict.rationale ?? 'policy violation'}`);
 				return;

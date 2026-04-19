@@ -1,10 +1,18 @@
-// Coach status state machine, surfaced as a single writable store so a
-// small indicator pill in the sidebar and an inline banner in the
-// composer can both reflect the same truth.
+// Coach status state machine — keyed by chatId.
+//
+// Each chat session has its own life-cycle (pre-flight screening → assistant
+// reply → post-flight review), so a single global status pill would
+// constantly thrash whenever the user has more than one chat open or
+// switches tabs mid-evaluation. We instead keep a map of `chatId → status`
+// plus a global base state ('off' / 'idle') for the on/off switch.
+//
+// Indicators read either:
+//   - their chat's status from the map, or
+//   - the global base state when there's no chat-scoped entry.
 //
 // Transient states (ok / flagged / followed-up / blocked / error) flash
-// briefly then settle back to idle; the caller passes no TTL — the store
-// schedules a revert itself so callers stay dumb.
+// briefly then drop out of the map; processing states stay until the next
+// flash overwrites them.
 
 import { writable } from 'svelte/store';
 
@@ -21,38 +29,62 @@ export type CoachStatus =
 
 const FLASH_MS = 4000;
 
-export const coachStatus = writable<CoachStatus>('off');
+// Global base state — driven by the on/off toggle.
+export const coachBaseState = writable<'off' | 'idle'>('off');
 
-let revertTimer: ReturnType<typeof setTimeout> | null = null;
+// Per-chat status map. Chats with no entry inherit the base state.
+export const coachStatusByChat = writable<Record<string, CoachStatus>>({});
 
-function cancelTimer() {
-	if (revertTimer !== null) {
-		clearTimeout(revertTimer);
-		revertTimer = null;
+// Track the most-recently-touched chat so global indicators (the sidebar
+// pill) can show meaningful activity even when the user is on the splash
+// page or navigated away from the chat that's still being evaluated.
+export const lastActiveChatId = writable<string | null>(null);
+
+const flashTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function clearFlashTimer(key: string) {
+	const t = flashTimers.get(key);
+	if (t !== undefined) {
+		clearTimeout(t);
+		flashTimers.delete(key);
 	}
 }
 
-export function setCoachBaseState(state: 'off' | 'idle') {
-	cancelTimer();
-	coachStatus.set(state);
+function writeChatStatus(chatId: string, status: CoachStatus) {
+	coachStatusByChat.update((m) => ({ ...m, [chatId]: status }));
+	lastActiveChatId.set(chatId);
 }
 
-export function setCoachProcessing(phase: 'pre' | 'post') {
-	cancelTimer();
-	coachStatus.set(phase === 'pre' ? 'processing-pre' : 'processing-post');
+function dropChatStatus(chatId: string) {
+	coachStatusByChat.update((m) => {
+		if (!(chatId in m)) return m;
+		const next = { ...m };
+		delete next[chatId];
+		return next;
+	});
+}
+
+export function setCoachBaseState(state: 'off' | 'idle') {
+	coachBaseState.set(state);
+}
+
+export function setCoachProcessing(phase: 'pre' | 'post', chatId: string | null) {
+	if (!chatId) return;
+	clearFlashTimer(chatId);
+	writeChatStatus(chatId, phase === 'pre' ? 'processing-pre' : 'processing-post');
 }
 
 export function flashCoachResult(
 	state: 'ok' | 'flagged' | 'followed-up' | 'blocked' | 'error',
-	// After the flash, return to this base state. Default 'idle' — the
-	// caller should pass 'off' if the user disabled coach meanwhile.
-	base: 'off' | 'idle' = 'idle',
+	chatId: string | null,
 	ms = FLASH_MS
 ) {
-	cancelTimer();
-	coachStatus.set(state);
-	revertTimer = setTimeout(() => {
-		coachStatus.set(base);
-		revertTimer = null;
+	if (!chatId) return;
+	clearFlashTimer(chatId);
+	writeChatStatus(chatId, state);
+	const t = setTimeout(() => {
+		dropChatStatus(chatId);
+		flashTimers.delete(chatId);
 	}, ms);
+	flashTimers.set(chatId, t);
 }
