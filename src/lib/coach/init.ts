@@ -19,11 +19,7 @@ import { coachConfig } from './stores/config';
 import { refreshCoachEvents } from './stores/events';
 import { coachFlags, setFlag } from './stores/flags';
 import { coachPolicies } from './stores/policies';
-import {
-	flashCoachResult,
-	setCoachBaseState,
-	setCoachProcessing
-} from './stores/status';
+import { flashCoachResult, setCoachProcessing } from './stores/status';
 
 let bootstrapped = false;
 let evalWired = false;
@@ -184,7 +180,9 @@ async function mountOverlay() {
 	try {
 		const { mount } = await import('svelte');
 		const FlagOverlay = (await import('./overlay/FlagOverlay.svelte')).default;
+		const StatusOverlay = (await import('./overlay/StatusOverlay.svelte')).default;
 		mount(FlagOverlay, { target: document.body });
+		mount(StatusOverlay, { target: document.body });
 	} catch (err) {
 		console.warn('[coach] overlay mount failed:', err);
 		overlayMounted = false;
@@ -200,13 +198,6 @@ user.subscribe((u) => {
 	if (u) {
 		void bootstrap();
 	}
-});
-
-// Base status mirrors the on/off switch. Transient states (ok / flagged /
-// blocked / error) override this for ~4s then the store reverts to
-// whatever the config currently says.
-coachConfig.subscribe((cfg) => {
-	setCoachBaseState(cfg?.enabled ? 'idle' : 'off');
 });
 
 // ── Pre-flight hook (exposed globally for Chat.svelte injection) ──

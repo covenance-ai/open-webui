@@ -1,24 +1,18 @@
-// Coach status state machine — keyed by chatId.
+// Coach status — keyed by chatId. There is no global truth: every coach
+// run belongs to a specific conversation, so a single global pill would
+// constantly thrash whenever there's more than one chat active.
 //
-// Each chat session has its own life-cycle (pre-flight screening → assistant
-// reply → post-flight review), so a single global status pill would
-// constantly thrash whenever the user has more than one chat open or
-// switches tabs mid-evaluation. We instead keep a map of `chatId → status`
-// plus a global base state ('off' / 'idle') for the on/off switch.
+// Components read either:
+//   - their chat's status from the map (transient, dropped after FLASH_MS),
+//   - or nothing (no entry → no pill).
 //
-// Indicators read either:
-//   - their chat's status from the map, or
-//   - the global base state when there's no chat-scoped entry.
-//
-// Transient states (ok / flagged / followed-up / blocked / error) flash
-// briefly then drop out of the map; processing states stay until the next
-// flash overwrites them.
+// On/off is *not* a status — it's a config concern (cfg.enabled), already
+// surfaced by the Switch in CoachPanel. Indicators that want to render
+// "coach is off" should consult the config store, not this one.
 
 import { writable } from 'svelte/store';
 
 export type CoachStatus =
-	| 'off'
-	| 'idle'
 	| 'processing-pre'
 	| 'processing-post'
 	| 'ok'
@@ -29,16 +23,8 @@ export type CoachStatus =
 
 const FLASH_MS = 4000;
 
-// Global base state — driven by the on/off toggle.
-export const coachBaseState = writable<'off' | 'idle'>('off');
-
-// Per-chat status map. Chats with no entry inherit the base state.
+// Per-chat status map. Chats with no entry have nothing happening.
 export const coachStatusByChat = writable<Record<string, CoachStatus>>({});
-
-// Track the most-recently-touched chat so global indicators (the sidebar
-// pill) can show meaningful activity even when the user is on the splash
-// page or navigated away from the chat that's still being evaluated.
-export const lastActiveChatId = writable<string | null>(null);
 
 const flashTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -52,7 +38,6 @@ function clearFlashTimer(key: string) {
 
 function writeChatStatus(chatId: string, status: CoachStatus) {
 	coachStatusByChat.update((m) => ({ ...m, [chatId]: status }));
-	lastActiveChatId.set(chatId);
 }
 
 function dropChatStatus(chatId: string) {
@@ -62,10 +47,6 @@ function dropChatStatus(chatId: string) {
 		delete next[chatId];
 		return next;
 	});
-}
-
-export function setCoachBaseState(state: 'off' | 'idle') {
-	coachBaseState.set(state);
 }
 
 export function setCoachProcessing(phase: 'pre' | 'post', chatId: string | null) {
