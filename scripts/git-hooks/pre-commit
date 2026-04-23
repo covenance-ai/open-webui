@@ -1,0 +1,40 @@
+#!/bin/bash
+set -euo pipefail
+
+# Auto-bump .coach-version patch on commits to main. Skipped on every
+# other branch so throwaway/feature branches don't thrash the version
+# file and cherry-picks don't fight a version conflict. The actual
+# bump happens when a commit lands on main — exactly when the version
+# should advance.
+#
+# We use a standalone .coach-version file (not package.json) because
+# package.json's version belongs to upstream Open WebUI and we don't
+# want to cause rebase conflicts on it.
+
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+if [ "$BRANCH" != "main" ]; then
+  exit 0
+fi
+
+VERSION_FILE=".coach-version"
+if [ ! -f "$VERSION_FILE" ]; then
+  echo "pre-commit: no $VERSION_FILE — skipping version bump" >&2
+  exit 0
+fi
+
+VERSION=$(tr -d '[:space:]' < "$VERSION_FILE")
+if [ -z "$VERSION" ]; then
+  echo "pre-commit: $VERSION_FILE is empty" >&2
+  exit 1
+fi
+
+MAJOR=$(echo "$VERSION" | cut -d. -f1)
+MINOR=$(echo "$VERSION" | cut -d. -f2)
+PATCH=$(echo "$VERSION" | cut -d. -f3)
+NEW_PATCH=$((PATCH + 1))
+NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
+
+printf '%s\n' "$NEW_VERSION" > "$VERSION_FILE"
+git add "$VERSION_FILE"
+
+echo "pre-commit: coach version bumped $VERSION → $NEW_VERSION"

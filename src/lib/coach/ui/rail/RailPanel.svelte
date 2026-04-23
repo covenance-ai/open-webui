@@ -247,7 +247,11 @@
 	}
 </script>
 
-{#if $coachConfig?.enabled}
+<!-- Rail renders unconditionally so users can always find the enable
+     toggle inside the embedded settings panel. Previously the rail was
+     gated on $coachConfig?.enabled, which created a chicken-and-egg:
+     the only toggle lived inside the rail, but the rail was hidden
+     until the toggle was on. -->
 	<aside class="coach-rail {collapsed ? 'is-collapsed' : ''}" aria-label="Coach activity">
 		{#if collapsed}
 			<button
@@ -349,9 +353,15 @@
 					{/each}
 				{/if}
 			</section>
+
+			<!-- Version footer. Auto-bumped on every commit to main by
+			     .git/hooks/pre-commit. At-a-glance answer to "is my
+			     latest change live here yet?" -->
+			<footer class="coach-rail-version" aria-label="Coach version">
+				v{COACH_VERSION}
+			</footer>
 		{/if}
 	</aside>
-{/if}
 
 <style>
 	.coach-rail {
@@ -516,6 +526,20 @@
 	.settings {
 		padding: 4px 10px 8px;
 		border-bottom: 1px solid rgb(229 231 235);
+	}
+	.coach-rail-version {
+		padding: 6px 10px;
+		border-top: 1px solid rgb(229 231 235);
+		font-size: 10.5px;
+		color: rgb(107 114 128);
+		text-align: center;
+		font-family: ui-monospace, SFMono-Regular, monospace;
+		letter-spacing: 0.02em;
+		flex: none;
+	}
+	:global(.dark) .coach-rail-version {
+		border-top-color: rgb(31 41 55);
+		color: rgb(107 114 128);
 	}
 	:global(.dark) .settings {
 		border-bottom-color: rgb(31 41 55);
