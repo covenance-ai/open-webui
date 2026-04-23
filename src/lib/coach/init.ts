@@ -148,6 +148,10 @@ async function onChatFinish(e: Event) {
 		})).json();
 	} catch (err) {
 		console.warn('[coach] evaluate failed:', err);
+		// Clear the pending reviewing-post chip so the UI doesn't get stuck
+		// spinning forever on a network/LLM error. The error is still
+		// surfaced via the status flash + the coach events log.
+		if (detail?.messageId) clearApproval(detail.messageId);
 		flashCoachResult('error', chatId);
 		return;
 	} finally {
@@ -214,28 +218,74 @@ function wireEvaluator() {
 	window.addEventListener('coach:chat:finish', onChatFinish);
 }
 
-let overlayMounted = false;
-async function mountOverlay() {
-	if (overlayMounted || typeof window === 'undefined') return;
-	overlayMounted = true;
-	try {
-		const { mount } = await import('svelte');
-		const FlagOverlay = (await import('./overlay/FlagOverlay.svelte')).default;
-		const StatusOverlay = (await import('./overlay/StatusOverlay.svelte')).default;
-		const BadgeOverlay = (await import('./overlay/BadgeOverlay.svelte')).default;
-		mount(FlagOverlay, { target: document.body });
-		mount(StatusOverlay, { target: document.body });
-		mount(BadgeOverlay, { target: document.body });
-	} catch (err) {
-		console.warn('[coach] overlay mount failed:', err);
-		overlayMounted = false;
+// Overlay mounting is variant-aware. Each variant lives under src/lib/coach/ui/
+// and exports a single "Mount" component that renders everything the variant
+// owns. On variant change we tear down the active set and mount the next.
+// Tear-down is important because variants overlap on screen real estate —
+// e.g. Rail's right panel would otherwise coexist with Chips' per-message
+// overlays.
+
+import { coachUIVariant, type CoachUIVariant } from './stores/ui';
+
+type UnmountFn = () => void;
+let activeVariant: CoachUIVariant | null = null;
+let activeMounts: UnmountFn[] = [];
+// Generation counter: each variant switch bumps it. Async import chains
+// that land after a newer switch compare their captured generation and
+// bail out — without this, rapid toggling could leave stale mounts on
+// screen alongside the newer variant.
+let variantGen = 0;
+
+async function mountForVariant(variant: CoachUIVariant) {
+	if (typeof window === 'undefined') return;
+	if (variant === activeVariant) return;
+	const gen = ++variantGen;
+	for (const fn of activeMounts) {
+		try {
+			fn();
+		} catch (err) {
+			console.warn('[coach] unmount failed:', err);
+		}
 	}
+	activeMounts = [];
+	activeVariant = variant;
+	try {
+		const { mount, unmount } = await import('svelte');
+		const mods: Array<{ default: unknown }> = [];
+		if (variant === 'chips') {
+			mods.push(await import('./overlay/FlagOverlay.svelte'));
+			mods.push(await import('./overlay/StatusOverlay.svelte'));
+			mods.push(await import('./overlay/BadgeOverlay.svelte'));
+		} else if (variant === 'rail') {
+			mods.push(await import('./ui/rail/RailMount.svelte'));
+		} else if (variant === 'theater') {
+			mods.push(await import('./ui/theater/TheaterMount.svelte'));
+		}
+		if (gen !== variantGen) return; // a newer switch won the race
+		for (const m of mods) {
+			const Component = m.default as Parameters<typeof mount>[0];
+			const instance = mount(Component, { target: document.body });
+			activeMounts.push(() => unmount(instance));
+		}
+	} catch (err) {
+		console.warn('[coach] mount failed for variant', variant, err);
+		if (gen === variantGen) activeVariant = null;
+	}
+}
+
+let variantSubscribed = false;
+function subscribeVariant() {
+	if (variantSubscribed || typeof window === 'undefined') return;
+	variantSubscribed = true;
+	coachUIVariant.subscribe((v) => {
+		void mountForVariant(v);
+	});
 }
 
 // Wire up immediately (side-effect import time). bootstrap() kicks in as
 // soon as `user` becomes available.
 wireEvaluator();
-void mountOverlay();
+subscribeVariant();
 
 user.subscribe((u) => {
 	if (u) {

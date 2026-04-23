@@ -9,6 +9,7 @@
 	import { coachConfig } from '../stores/config';
 	import { coachEvents, refreshCoachEvents } from '../stores/events';
 	import { coachPolicies, personalPolicies, sharedPolicies } from '../stores/policies';
+	import { COACH_UI_VARIANTS, coachUIVariant, type CoachUIVariant } from '../stores/ui';
 	import type {
 		CoachConfigForm,
 		CoachEvent,
@@ -251,6 +252,29 @@
 						<option value={m.id}>{m.name ?? m.id}</option>
 					{/each}
 				</select>
+			</label>
+
+			<!-- UI variant picker -->
+			<label class="flex flex-col gap-0.5">
+				<span class="text-gray-500 dark:text-gray-400">UI style</span>
+				<select
+					value={$coachUIVariant}
+					on:change={(e) => coachUIVariant.set((e.currentTarget as HTMLSelectElement).value as CoachUIVariant)}
+					class="w-full px-2 py-1 rounded-md bg-transparent border border-gray-200 dark:border-gray-700 outline-none focus:ring-1 focus:ring-emerald-500"
+				>
+					{#each COACH_UI_VARIANTS as v}
+						<option value={v}>{v}</option>
+					{/each}
+				</select>
+				<span class="text-[10px] text-gray-400 dark:text-gray-500 leading-tight">
+					{#if $coachUIVariant === 'chips'}
+						Minimal overlays on each message + corner pill.
+					{:else if $coachUIVariant === 'rail'}
+						Persistent right-side activity panel.
+					{:else}
+						Anthropomorphic coach persona + whispers.
+					{/if}
+				</span>
 			</label>
 
 			<!-- Shared policies -->
