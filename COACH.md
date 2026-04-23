@@ -201,6 +201,46 @@ Flip demo mode on from the Coach panel; the scripted triggers (`demo:flag`,
 `demo:followup`, `demo:block`, hiring keywords) all work without a
 configured coach model.
 
+### One-command demo harness
+
+Three scripts bring the whole pre-flight-block flow up headlessly and grab
+a screenshot, so you can verify UI changes (Rule 9) without clicking
+through signin + onboarding + policy creation:
+
+```bash
+scripts/coach-demo-up.sh              # start backend + vite, seed, screenshot
+scripts/coach-demo-up.sh --no-shot    # seed only; useful for interactive runs
+scripts/coach-demo-up.sh --teardown   # stop only the servers this script started
+```
+
+What each piece does:
+
+- `scripts/coach-seed.mjs` — REST-only. Idempotently signs up (or signs in)
+  `coach-demo@local.dev`, creates a "no HR use" policy with
+  explanation_url, enables coach in demo mode with that policy active.
+  Emits `{ api, token, user_id, policy_id }` JSON on stdout.
+- `scripts/coach-block-screenshot.mjs` — playwright. Reads seed JSON
+  from stdin or `--seed=path`, injects the token into `localStorage`
+  before SvelteKit hydrates (bypassing the signin form), dismisses
+  the "What's new" changelog dialog, submits a hiring prompt, waits
+  for `article.coach-block`, full-page PNG to `--out=`.
+- `scripts/coach-demo-up.sh` — orchestrator. Activates `.venv`, starts
+  uvicorn on 8080 + vite on **5180** (not 5173 — that's commonly held
+  by other local dev servers, and a wrong-page screenshot silently
+  gives a bogus verification). Writes pids to `.coach-demo-logs/pids`
+  for `--teardown`.
+
+Gotchas worth remembering:
+
+- `CORS_ALLOW_ORIGIN` must include both `localhost:$PORT` and
+  `127.0.0.1:$PORT` — vite binds 127.0.0.1 but browsers treat the two
+  hostnames as different origins.
+- The `is_up` probe for the frontend checks the HTML for an Open WebUI
+  marker; a raw HTTP 200 from some other project on the port isn't
+  enough.
+- `.venv` at the repo root is what uvicorn needs on its PATH. Missing
+  deps? `uv pip install --python .venv/bin/python -r backend/requirements.txt`.
+
 See `README.md` for upstream dev instructions. Coach-specific notes:
 
 - Run `scripts/check_injections.sh` after every rebase — see below.
