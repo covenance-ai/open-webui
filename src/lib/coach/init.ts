@@ -19,7 +19,6 @@ import { clearApproval, setApproval } from './stores/approvals';
 import { coachConfig } from './stores/config';
 import { coachPerChatEnabled, isCoachEnabledForChat } from './stores/perChat';
 import { setBlockBanner } from './stores/blockBanner';
-import { coachPolicies } from './stores/policies';
 import { refreshCoachEvents } from './stores/events';
 import { coachFlags, setFlag } from './stores/flags';
 import { coachPolicies } from './stores/policies';
