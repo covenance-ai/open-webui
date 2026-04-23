@@ -17,6 +17,7 @@ import { WEBUI_API_BASE_URL } from '$lib/constants';
 import * as api from './api';
 import { clearApproval, setApproval } from './stores/approvals';
 import { coachConfig } from './stores/config';
+import { coachPerChatEnabled, isCoachEnabledForChat } from './stores/perChat';
 import { refreshCoachEvents } from './stores/events';
 import { coachFlags, setFlag } from './stores/flags';
 import { coachPolicies } from './stores/policies';
@@ -106,12 +107,18 @@ async function onChatFinish(e: Event) {
 		history?: UpstreamHistory;
 	};
 	const chatId = detail?.chatId ?? null;
-	// Gate: coach must be enabled, and either demo_mode on (scripted verdicts,
-	// no model/policy needed) or the real path fully configured.
+	// Gate: coach must be enabled both globally AND for this chat (per-chat
+	// override wins), and either demo_mode on (scripted verdicts, no
+	// model/policy needed) or the real path fully configured.
+	const effectivelyEnabled = isCoachEnabledForChat(
+		chatId,
+		cfg?.enabled ?? false,
+		get(coachPerChatEnabled)
+	);
 	const realPathReady = Boolean(
 		cfg?.coach_model_id && (cfg?.active_policy_ids?.length ?? 0) > 0
 	);
-	if (!cfg?.enabled || (!cfg.demo_mode && !realPathReady)) {
+	if (!effectivelyEnabled || (!cfg?.demo_mode && !realPathReady)) {
 		return;
 	}
 
@@ -331,10 +338,15 @@ export async function coachPreflight(
 	const token = getToken();
 	if (!token) return { action: 'none', evaluated: false };
 	const cfg = get(coachConfig);
+	const effectivelyEnabled = isCoachEnabledForChat(
+		chatId ?? null,
+		cfg?.enabled ?? false,
+		get(coachPerChatEnabled)
+	);
 	const realPathReady = Boolean(
 		cfg?.coach_model_id && (cfg?.active_policy_ids?.length ?? 0) > 0
 	);
-	if (!cfg?.enabled || (!cfg.demo_mode && !realPathReady)) {
+	if (!effectivelyEnabled || (!cfg?.demo_mode && !realPathReady)) {
 		return { action: 'none', evaluated: false };
 	}
 

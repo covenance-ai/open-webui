@@ -1,21 +1,30 @@
 <script lang="ts">
-	// Always-on coach status light — bottom-right corner, visible regardless
-	// of which UI variant is active (chips/rail/theater all keep their own
-	// richer surfaces on top of this).
+	// Always-on coach status light — bottom-right corner, visible
+	// regardless of which UI variant is active (chips/rail/theater all
+	// keep their own richer surfaces on top of this).
 	//
-	// Four coarse states, matching "is coach working?" as the user would
-	// ask it:
-	//   off        coach disabled, no model, or no active policies — nothing
-	//              will happen when you send a message.
-	//   waiting    coach is armed and idle.
+	// Four coarse states:
+	//   off        coach disabled (globally or for this chat), no model,
+	//              or no active policies — nothing will happen.
+	//   ready      coach is armed and idle.
 	//   processing currently evaluating (pre-flight or post-flight).
-	//   intervened just produced a non-none verdict (block/flag/followup)
-	//              or errored — flashes for 6s then returns to waiting.
+	//   intervened just produced a non-none verdict or errored —
+	//              flashes for 4s then returns to ready.
 	//
-	// Click the light to open the coach config panel.
+	// Click opens a menu with two toggles:
+	//   - "Coach on new chats" (global default; writes to coachConfig)
+	//   - "In this conversation" (per-chat override; null = follow global)
+
+	import { onMount } from 'svelte';
+	import { get } from 'svelte/store';
 
 	import { chatId } from '$lib/stores';
 	import { coachConfig } from '../stores/config';
+	import {
+		coachPerChatEnabled,
+		isCoachEnabledForChat,
+		setCoachForChat
+	} from '../stores/perChat';
 	import { coachStatusByChat, type CoachStatus } from '../stores/status';
 
 	type Kind = 'off' | 'waiting' | 'processing' | 'intervened';
@@ -28,26 +37,28 @@
 	}
 
 	$: cfg = $coachConfig;
-	$: enabled = cfg?.enabled ?? false;
+	$: globalEnabled = cfg?.enabled ?? false;
 	$: model = cfg?.coach_model_id ?? null;
-	$: policies = cfg?.active_policy_ids?.length ?? 0;
+	$: policyCount = cfg?.active_policy_ids?.length ?? 0;
+	$: perChatOverride = ($chatId && $coachPerChatEnabled[$chatId]) ?? undefined;
+	$: effectivelyEnabled = isCoachEnabledForChat(
+		$chatId ?? null,
+		globalEnabled,
+		$coachPerChatEnabled
+	);
 	$: chatState = ($chatId && $coachStatusByChat[$chatId]) || null;
 
-	// Derive the 4-state model from (config, per-chat event).
-	// Off reasons: distinguished in the tooltip so the user knows what to
-	// fix — a single generic "off" is the frustration we're fixing.
 	function offReason(): string | null {
-		if (!enabled) return 'disabled';
+		if (!globalEnabled && !effectivelyEnabled) return 'off globally';
+		if (!effectivelyEnabled) return 'off for this chat';
 		if (!model) return 'no coach model selected';
-		if (policies === 0) return 'no active policies';
+		if (policyCount === 0) return 'no active policies';
 		return null;
 	}
 
 	function classifyChatState(s: CoachStatus | null): Kind | null {
 		if (s === null) return null;
 		if (s === 'processing-pre' || s === 'processing-post') return 'processing';
-		// ok / flagged / followed-up / blocked / error all count as "intervened"
-		// for the coarse indicator — the label below distinguishes them.
 		return 'intervened';
 	}
 
@@ -78,7 +89,7 @@
 			return {
 				kind: 'off',
 				label: 'off',
-				title: `Coach is off — ${off}. Click to configure.`,
+				title: `Coach is off — ${off}. Click to change.`,
 				cls: 'bg-gray-400 dark:bg-gray-500',
 				pulse: false
 			};
@@ -110,43 +121,174 @@
 				pulse: false
 			};
 		}
-		// waiting
 		return {
 			kind: 'waiting',
 			label: 'ready',
-			title: `Coach is armed (${policies} ${policies === 1 ? 'policy' : 'policies'}, model: ${model})`,
+			title: `Coach is armed (${policyCount} ${policyCount === 1 ? 'policy' : 'policies'}, model: ${model})`,
 			cls: 'bg-emerald-500',
 			pulse: false
 		};
 	})();
 
-	function openPanel() {
-		// The coach panel is a sidebar tab controlled by upstream; we emit a
-		// generic event so whichever mount strategy wins gets a chance to
-		// open itself. init.ts wires the panel open-handler.
+	// ── Menu ──────────────────────────────────────────────────────────
+	let menuOpen = false;
+	let rootEl: HTMLElement;
+
+	function toggleMenu() {
+		menuOpen = !menuOpen;
+	}
+
+	function closeMenu() {
+		menuOpen = false;
+	}
+
+	function onGlobalToggle() {
+		// Optimistic local flip; persistence happens via the existing
+		// coachConfig subscribe → PUT /api/v1/coach/config pipeline.
+		coachConfig.update((c) => (c ? { ...c, enabled: !c.enabled } : c));
+		// Trigger persistence through the existing flow: the upstream
+		// config panel writes via its own save button, but the light
+		// should feel instant. A single-field update is pushed via a
+		// dedicated API call the config store handles — matches how
+		// the panel's Enabled toggle works.
+		void persistGlobalEnabled();
+	}
+
+	async function persistGlobalEnabled() {
+		try {
+			const token = localStorage.getItem('token');
+			if (!token) return;
+			const next = get(coachConfig);
+			if (!next) return;
+			await fetch('/api/v1/coach/config', {
+				method: 'PUT',
+				headers: {
+					Authorization: `Bearer ${token}`,
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({
+					enabled: next.enabled,
+					demo_mode: next.demo_mode,
+					coach_model_id: next.coach_model_id,
+					active_policy_ids: next.active_policy_ids
+				})
+			});
+		} catch (err) {
+			console.warn('[coach] failed to persist global enabled:', err);
+		}
+	}
+
+	function onChatToggle() {
+		if (!$chatId) return;
+		// Three-state cycle is avoided — the user came here to flip ON/OFF.
+		// If they want "follow global" they can use the "Reset" button.
+		const current = isCoachEnabledForChat(
+			$chatId,
+			globalEnabled,
+			$coachPerChatEnabled
+		);
+		setCoachForChat($chatId, !current);
+	}
+
+	function onChatReset() {
+		if (!$chatId) return;
+		setCoachForChat($chatId, null);
+	}
+
+	function onDocClick(e: MouseEvent) {
+		if (!menuOpen) return;
+		if (rootEl && !rootEl.contains(e.target as Node)) {
+			closeMenu();
+		}
+	}
+
+	function onKey(e: KeyboardEvent) {
+		if (e.key === 'Escape' && menuOpen) closeMenu();
+	}
+
+	onMount(() => {
+		document.addEventListener('mousedown', onDocClick);
+		document.addEventListener('keydown', onKey);
+		return () => {
+			document.removeEventListener('mousedown', onDocClick);
+			document.removeEventListener('keydown', onKey);
+		};
+	});
+
+	function openFullPanel() {
 		window.dispatchEvent(new CustomEvent('coach:open-panel'));
+		closeMenu();
 	}
 </script>
 
-<button
-	type="button"
-	on:click={openPanel}
-	class="coach-light"
-	data-coach-light={display.kind}
-	aria-live="polite"
-	aria-label="Coach status: {display.label}"
-	title={display.title}
->
-	<span class="dot {display.cls}" class:pulse={display.pulse} />
-	<span class="label">Coach: {display.label}</span>
-</button>
+<div class="coach-light-root" bind:this={rootEl}>
+	{#if menuOpen}
+		<div class="coach-menu" role="menu" aria-label="Coach settings">
+			<div class="menu-row">
+				<span class="menu-label">Coach on new chats</span>
+				<button
+					type="button"
+					class="switch"
+					class:on={globalEnabled}
+					aria-pressed={globalEnabled}
+					on:click={onGlobalToggle}
+				>
+					<span class="knob" />
+				</button>
+			</div>
+
+			<div class="menu-row">
+				<span class="menu-label">
+					In this conversation
+					{#if perChatOverride === undefined}
+						<span class="hint">(following global)</span>
+					{:else}
+						<button type="button" class="reset" on:click={onChatReset}>reset</button>
+					{/if}
+				</span>
+				<button
+					type="button"
+					class="switch"
+					class:on={effectivelyEnabled}
+					class:disabled={!$chatId}
+					aria-pressed={effectivelyEnabled}
+					disabled={!$chatId}
+					on:click={onChatToggle}
+				>
+					<span class="knob" />
+				</button>
+			</div>
+
+			<button type="button" class="menu-link" on:click={openFullPanel}>
+				Open full settings →
+			</button>
+		</div>
+	{/if}
+
+	<button
+		type="button"
+		on:click={toggleMenu}
+		class="coach-light"
+		data-coach-light={display.kind}
+		aria-haspopup="menu"
+		aria-expanded={menuOpen}
+		aria-live="polite"
+		aria-label="Coach status: {display.label}"
+		title={display.title}
+	>
+		<span class="dot {display.cls}" class:pulse={display.pulse} />
+		<span class="label">Coach: {display.label}</span>
+	</button>
+</div>
 
 <style>
-	.coach-light {
+	.coach-light-root {
 		position: fixed;
 		right: 18px;
 		bottom: 18px;
 		z-index: 50;
+	}
+	.coach-light {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.5rem;
@@ -194,7 +336,6 @@
 	}
 	.label {
 		white-space: nowrap;
-		tabular-nums: 1;
 	}
 	@keyframes coach-light-pulse {
 		0%,
@@ -206,5 +347,115 @@
 			opacity: 0.55;
 			transform: scale(0.82);
 		}
+	}
+
+	/* ── menu ─────────────────────────────────────────────────────── */
+	.coach-menu {
+		position: absolute;
+		right: 0;
+		bottom: calc(100% + 8px);
+		min-width: 240px;
+		padding: 0.5rem 0.25rem 0.25rem 0.25rem;
+		border-radius: 10px;
+		background: rgba(255, 255, 255, 0.98);
+		color: rgba(17, 24, 39, 0.9);
+		font-family: ui-sans-serif, system-ui, sans-serif;
+		font-size: 12px;
+		box-shadow:
+			0 2px 8px rgba(0, 0, 0, 0.08),
+			0 16px 48px rgba(0, 0, 0, 0.12);
+		border: 1px solid rgba(0, 0, 0, 0.08);
+	}
+	:global(.dark) .coach-menu {
+		background: rgba(17, 24, 39, 0.98);
+		color: rgba(229, 231, 235, 0.95);
+		border-color: rgba(255, 255, 255, 0.1);
+	}
+	.menu-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		padding: 0.5rem 0.625rem;
+	}
+	.menu-label {
+		display: flex;
+		flex-direction: column;
+	}
+	.hint {
+		font-size: 10.5px;
+		opacity: 0.6;
+		margin-top: 2px;
+	}
+	.reset {
+		font-size: 10.5px;
+		opacity: 0.7;
+		background: none;
+		border: none;
+		padding: 0;
+		margin-top: 2px;
+		cursor: pointer;
+		text-decoration: underline;
+		color: inherit;
+	}
+	.reset:hover {
+		opacity: 1;
+	}
+	.menu-link {
+		display: block;
+		width: 100%;
+		text-align: left;
+		padding: 0.5rem 0.625rem;
+		margin-top: 0.25rem;
+		border-top: 1px solid rgba(0, 0, 0, 0.06);
+		background: none;
+		color: inherit;
+		font: inherit;
+		cursor: pointer;
+	}
+	:global(.dark) .menu-link {
+		border-top-color: rgba(255, 255, 255, 0.08);
+	}
+	.menu-link:hover {
+		background: rgba(0, 0, 0, 0.04);
+	}
+	:global(.dark) .menu-link:hover {
+		background: rgba(255, 255, 255, 0.05);
+	}
+	.switch {
+		position: relative;
+		width: 34px;
+		height: 18px;
+		border-radius: 9999px;
+		background: rgba(0, 0, 0, 0.2);
+		border: none;
+		padding: 0;
+		cursor: pointer;
+		transition: background 0.15s ease;
+		flex: none;
+	}
+	:global(.dark) .switch {
+		background: rgba(255, 255, 255, 0.18);
+	}
+	.switch.on {
+		background: #10b981;
+	}
+	.switch.disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+	.knob {
+		position: absolute;
+		top: 2px;
+		left: 2px;
+		width: 14px;
+		height: 14px;
+		border-radius: 9999px;
+		background: #fff;
+		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+		transition: transform 0.15s ease;
+	}
+	.switch.on .knob {
+		transform: translateX(16px);
 	}
 </style>
