@@ -26,6 +26,14 @@
 		setCoachForChat
 	} from '../stores/perChat';
 	import { coachStatusByChat, type CoachStatus } from '../stores/status';
+	import { coachUIVariant } from '../stores/ui';
+
+	// Hide when the rail variant is active — the rail already shows
+	// live status, toggles live in its embedded settings panel, and
+	// the floating light pill overlaps upstream's send button. On the
+	// chips/theater variants the light is the only status surface so
+	// it stays.
+	$: hidden = $coachUIVariant === 'rail';
 
 	type Kind = 'off' | 'waiting' | 'processing' | 'intervened';
 	interface Display {
@@ -221,6 +229,7 @@
 	}
 </script>
 
+{#if !hidden}
 <div class="coach-light-root" bind:this={rootEl}>
 	{#if menuOpen}
 		<div class="coach-menu" role="menu" aria-label="Coach settings">
@@ -280,6 +289,7 @@
 		<span class="label">Coach: {display.label}</span>
 	</button>
 </div>
+{/if}
 
 <style>
 	.coach-light-root {

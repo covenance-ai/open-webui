@@ -430,28 +430,64 @@ export interface PreflightBlockDetail {
 }
 
 export function composeCoachBlockMarkdown(verdict: PreflightBlockDetail): string {
+	// Renders as the assistant-reply markdown in-chat. Open WebUI's
+	// markdown pipeline supports GFM + inline HTML, so we use a styled
+	// <div> card for strong visual hierarchy (policy title huge,
+	// rationale as a clearly-marked quote, explanation link as a
+	// prominent button-like link). Markdown alone reads like plain
+	// text; the HTML card makes the block impossible to miss.
 	const policy = (get(coachPolicies) ?? []).find((p) => p.id === verdict.policy_id) ?? null;
-	const lines: string[] = [];
-	lines.push('## 🛑 Coach blocked this request');
-	lines.push('');
-	if (policy) {
-		lines.push(`**Rule violated — ${policy.title}**`);
-		lines.push('');
-		lines.push(policy.body);
-		lines.push('');
-	}
-	if (verdict.rationale) {
-		lines.push("**Why this query specifically — coach's rationale:**");
-		lines.push('');
-		lines.push(`> ${verdict.rationale.replace(/\n/g, '\n> ')}`);
-		lines.push('');
-	}
-	lines.push('---');
-	lines.push(
-		'_This message was placed here by the policy coach, not the LLM. ' +
-			'You can rephrase your request, or take this task outside the assistant._'
+	const title = policy?.title ?? 'Policy violation';
+	const body = policy?.body ?? '';
+	const url = policy?.explanation_url ?? null;
+	const rationale = (verdict.rationale ?? '').trim();
+
+	// Minimal inline styles — the markdown renderer usually strips
+	// <style>, but style=".." attributes survive. Uses colors that
+	// read well on both light and dark themes (red/amber tones,
+	// currentColor for text blends in).
+	const esc = (s: string) =>
+		s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+	const cardStyle = [
+		'border-left: 4px solid #dc2626',
+		'background: linear-gradient(180deg, rgba(254,226,226,0.55), rgba(254,226,226,0.15))',
+		'padding: 14px 18px',
+		'border-radius: 10px',
+		'margin: 4px 0 8px'
+	].join(';');
+
+	const parts: string[] = [];
+	parts.push(`<div style="${cardStyle}">`);
+	parts.push(
+		'<div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#991b1b;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">'
 	);
-	return lines.join('\n');
+	parts.push('<span aria-hidden="true">⛔</span>');
+	parts.push('<span>Coach blocked this request</span>');
+	parts.push('</div>');
+	parts.push(
+		`<div style="font-size:17px;font-weight:700;color:#7f1d1d;margin-bottom:10px;line-height:1.25">${esc(title)}</div>`
+	);
+	if (rationale) {
+		parts.push(
+			`<blockquote style="margin:0 0 10px;padding:8px 12px;border-left:3px solid rgba(185,28,28,0.4);background:rgba(255,255,255,0.5);font-style:italic;color:#7f1d1d;border-radius:0 6px 6px 0">${esc(rationale)}</blockquote>`
+		);
+	}
+	if (body) {
+		parts.push(
+			`<details style="margin-bottom:10px"><summary style="cursor:pointer;font-size:12px;opacity:0.75">Show full policy text</summary><div style="margin-top:6px;font-size:13px;line-height:1.5;white-space:pre-wrap">${esc(body)}</div></details>`
+		);
+	}
+	if (url) {
+		parts.push(
+			`<div><a href="${esc(url)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:6px 12px;border-radius:9999px;background:#dc2626;color:#fff;font-size:13px;font-weight:600;text-decoration:none">Read full explanation ↗</a></div>`
+		);
+	}
+	parts.push(
+		'<div style="margin-top:10px;font-size:11px;opacity:0.65">This response was written by the policy coach, not the LLM. Rephrase your request or take this task outside the assistant.</div>'
+	);
+	parts.push('</div>');
+	return parts.join('\n');
 }
 
 // Appends a single coach-authored assistant turn as a child of an

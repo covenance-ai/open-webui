@@ -2030,6 +2030,16 @@
 				const appendBlock = (window)?.coachAppendBlockMessage;
 				if (typeof appendBlock === 'function') {
 					const { coachMessageId } = appendBlock(history, userMessageId, coachPreflightVerdict);
+					// [coach] Force Svelte to see the mutation. appendBlock
+					// mutated history.messages + history.currentId in place
+					// from window scope; nested mutations don't propagate
+					// to child components (Messages.svelte, MessageInput.svelte)
+					// without a parent reassignment. Without this: the coach
+					// message doesn't render in the chat, AND MessageInput's
+					// isActive stays true (done!=true on the user message,
+					// which is still currentId in the stale view), so the
+					// send button shows as a stop button indefinitely.
+					history = history;
 					if (!$temporaryChatEnabled && $chatId) {
 						try {
 							chat = await updateChatById(localStorage.token, $chatId, {
