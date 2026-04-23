@@ -3,6 +3,7 @@
 import os
 import time
 import uuid
+from contextlib import contextmanager
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -15,7 +16,22 @@ from open_webui.coach.schemas import (
     CoachPolicyResponse,
     CoachPolicyUpdateForm,
 )
-from open_webui.internal.db import get_db_context
+from open_webui.internal.db import get_db
+
+
+# Upstream had a `get_db_context(db)` helper that reused an externally
+# provided Session if given, otherwise opened a new one. It was removed
+# in upstream's async-db refac (27169124f) because runtime code moved to
+# async sessions. Coach storage is sync and nests these contexts (outer
+# caller may pass `db`, inner method re-enters), so we keep the same
+# helper locally. Drop-in replacement for the old import.
+@contextmanager
+def get_db_context(db: Optional[Session] = None):
+    if db is not None:
+        yield db
+    else:
+        with get_db() as session:
+            yield session
 
 
 # Seeded once on first config creation so that "enable coach" alone is enough
