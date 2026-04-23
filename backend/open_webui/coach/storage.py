@@ -53,6 +53,11 @@ DEFAULT_HIRING_POLICY_BODY = (
     '- EU AI Act, Article 6 (high-risk classification): https://artificialintelligenceact.eu/article/6/\n'
     '- EEOC guidance on AI in hiring (US): https://www.eeoc.gov/ai'
 )
+# URL shown in the block banner — single prominent "read more" link.
+# Wikipedia is stable, ad-free, and translatable; fine for a demo.
+DEFAULT_HIRING_POLICY_EXPLANATION_URL = (
+    'https://en.wikipedia.org/wiki/Artificial_Intelligence_Act'
+)
 
 
 def _ensure_default_shared_policies(db: Session) -> list[str]:
@@ -70,6 +75,7 @@ def _ensure_default_shared_policies(db: Session) -> list[str]:
             is_shared=True,
             title=DEFAULT_HIRING_POLICY_TITLE,
             body=DEFAULT_HIRING_POLICY_BODY,
+            explanation_url=DEFAULT_HIRING_POLICY_EXPLANATION_URL,
             created_at=now,
             updated_at=now,
         )
@@ -186,6 +192,7 @@ class CoachPolicyTable:
                 is_shared=False,
                 title=form.title,
                 body=form.body,
+                explanation_url=form.explanation_url,
                 created_at=now,
                 updated_at=now,
             )
@@ -208,6 +215,10 @@ class CoachPolicyTable:
                 row.title = form.title
             if form.body is not None:
                 row.body = form.body
+            if form.explanation_url is not None:
+                # Empty string ('') clears the URL; None in form leaves
+                # the existing value untouched (standard Update semantics).
+                row.explanation_url = form.explanation_url or None
             row.updated_at = int(time.time())
             db.commit()
             db.refresh(row)

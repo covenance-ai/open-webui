@@ -32,6 +32,10 @@ class CoachPolicyResponse(BaseModel):
     is_shared: bool
     title: str
     body: str
+    # Optional hyperlink shown to the user when a block/flag banner
+    # renders — for a full explanation (Wikipedia article, regulation,
+    # internal wiki, ...).
+    explanation_url: Optional[str] = None
     created_at: int
     updated_at: int
 
@@ -41,11 +45,13 @@ class CoachPolicyResponse(BaseModel):
 class CoachPolicyCreateForm(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     body: str = Field(min_length=1, max_length=5000)
+    explanation_url: Optional[str] = Field(default=None, max_length=2000)
 
 
 class CoachPolicyUpdateForm(BaseModel):
     title: Optional[str] = Field(default=None, min_length=1, max_length=200)
     body: Optional[str] = Field(default=None, min_length=1, max_length=5000)
+    explanation_url: Optional[str] = Field(default=None, max_length=2000)
 
 
 # ─── Evaluate ──────────────────────────────────────────────────────────

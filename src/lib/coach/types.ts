@@ -24,6 +24,9 @@ export interface CoachPolicy {
 	is_shared: boolean;
 	title: string;
 	body: string;
+	// Optional hyperlink shown in the block banner — "read full
+	// explanation" link. Wikipedia / regulation / internal wiki / etc.
+	explanation_url?: string | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -31,11 +34,13 @@ export interface CoachPolicy {
 export interface CoachPolicyCreateForm {
 	title: string;
 	body: string;
+	explanation_url?: string | null;
 }
 
 export interface CoachPolicyUpdateForm {
 	title?: string;
 	body?: string;
+	explanation_url?: string | null;
 }
 
 // ── Activity log ────────────────────────────────────────────────────

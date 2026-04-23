@@ -37,5 +37,9 @@ class CoachPolicy(Base):
     is_shared = Column(Boolean, nullable=False, default=False, index=True)
     title = Column(Text, nullable=False)
     body = Column(Text, nullable=False)
+    # Optional URL the user can follow for a full explanation when a policy
+    # fires (e.g. a Wikipedia article, a regulation page, an internal wiki).
+    # Rendered by the frontend as a hyperlink in the block banner.
+    explanation_url = Column(Text, nullable=True)
     created_at = Column(BigInteger, nullable=False)
     updated_at = Column(BigInteger, nullable=False)

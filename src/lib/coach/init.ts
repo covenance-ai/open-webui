@@ -18,6 +18,8 @@ import * as api from './api';
 import { clearApproval, setApproval } from './stores/approvals';
 import { coachConfig } from './stores/config';
 import { coachPerChatEnabled, isCoachEnabledForChat } from './stores/perChat';
+import { setBlockBanner } from './stores/blockBanner';
+import { coachPolicies } from './stores/policies';
 import { refreshCoachEvents } from './stores/events';
 import { coachFlags, setFlag } from './stores/flags';
 import { coachPolicies } from './stores/policies';
@@ -288,18 +290,25 @@ function subscribeVariant() {
 	});
 }
 
-// Always-on coach status light — a single bottom-right indicator that
-// shows off/waiting/processing/intervened regardless of UI variant.
-// The variant system only adds richer per-message surfaces on top; the
-// light exists so "is coach working?" is never in doubt.
-async function mountCoachLight() {
+// Always-on coach surfaces — mounted once regardless of UI variant:
+//   CoachLight         bottom-right status indicator ("is coach working?")
+//   CoachBlockBanner   top-center persistent banner when coach blocked
+//                      the latest message, with "read full explanation"
+//                      link (policy.explanation_url).
+// Variant mounts (chips/rail/theater) add richer per-message surfaces
+// on top of these; the two globals exist so the core "coach state is
+// visible" and "user always understands why a block happened" guarantees
+// hold whatever variant is active.
+async function mountGlobalCoachSurfaces() {
 	if (typeof window === 'undefined') return;
 	try {
 		const { mount } = await import('svelte');
 		const CoachLight = (await import('./components/CoachLight.svelte')).default;
+		const CoachBlockBanner = (await import('./components/CoachBlockBanner.svelte')).default;
 		mount(CoachLight as Parameters<typeof mount>[0], { target: document.body });
+		mount(CoachBlockBanner as Parameters<typeof mount>[0], { target: document.body });
 	} catch (err) {
-		console.warn('[coach] CoachLight mount failed:', err);
+		console.warn('[coach] global surface mount failed:', err);
 	}
 }
 
@@ -307,7 +316,7 @@ async function mountCoachLight() {
 // soon as `user` becomes available.
 wireEvaluator();
 subscribeVariant();
-void mountCoachLight();
+void mountGlobalCoachSurfaces();
 
 user.subscribe((u) => {
 	if (u) {
@@ -383,6 +392,22 @@ export async function coachPreflight(
 
 	if (verdict?.action === 'block') {
 		flashCoachResult('blocked', scope);
+		// Populate the persistent banner so the user can read the full
+		// explanation at their own pace (the inline assistant-style block
+		// message works too, but scrolls away).
+		if (scope) {
+			const policies = get(coachPolicies);
+			const policy = verdict.policy_id
+				? policies.find((p) => p.id === verdict.policy_id) ?? null
+				: null;
+			setBlockBanner(scope, {
+				policyId: verdict.policy_id ?? null,
+				policyTitle: policy?.title ?? null,
+				rationale: verdict.rationale ?? 'Policy violation',
+				explanationUrl: policy?.explanation_url ?? null,
+				at: Date.now()
+			});
+		}
 		return {
 			action: 'block',
 			evaluated: true,
