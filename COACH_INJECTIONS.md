@@ -144,15 +144,22 @@ Grep anchors:
 
 **What**: at the top of `submitPrompt`, call `window.coachPreflight`. On
 `action=block`, render a coach-authored "assistant" message containing the
-rule + rationale via `window.coachInsertBlockExchange`, persist the chat,
+rule + rationale via `window.coachAppendBlockMessage`, persist the chat,
 and return without sending the query to the LLM. On `action=none` *and*
 `evaluated=true`, mark the freshly-added user message as coach-approved
-via `window.setCoachApproval` so the BadgeOverlay can render a green
-shield.
+via `window.markCoachApprovedPre` so the UI can render the approved state.
+Also call `window.markCoachReviewingPre` as soon as the user message id
+is known, so the UI can show a reviewing chip while `coachPreflight`
+awaits the verdict.
+
+Also: on chat load (history hydrated from the server), call
+`window.coachHydrateFromHistory(history)` so persisted flags/approvals
+re-populate the stores without waiting for the next message.
 
 **Anchor**: the first line of `submitPrompt` — the `console.log('submitPrompt', ...)`,
 and the `history.messages[userMessageId] = userMessage` line further down
-where the user message gets added.
+where the user message gets added. The hydration hook sits where history
+is loaded from the server (around the `initChatHandler` call site).
 
 Change (block path):
 ```svelte
@@ -160,45 +167,49 @@ const submitPrompt = async (userPrompt, { _raw = false } = {}) => {
   console.log('submitPrompt', userPrompt, $chatId);
 
   // [coach] Pre-flight policy screen.
-  let coachPreflightVerdict = null;
   const coachPreflight = (window)?.coachPreflight;
   if (typeof coachPreflight === 'function' && userPrompt) {
-    coachPreflightVerdict = await coachPreflight(userPrompt, history, $chatId);
+    (window)?.markCoachReviewingPre?.(userMessageId);
+    await tick();
+    const coachPreflightVerdict = await coachPreflight(userPrompt, history, $chatId);
     if (coachPreflightVerdict?.action === 'block') {
-      const insertBlock = (window)?.coachInsertBlockExchange;
-      if (typeof insertBlock === 'function') {
-        const { coachMessageId } = insertBlock(history, userPrompt, coachPreflightVerdict, selectedModels);
+      (window)?.clearCoachBadge?.(userMessageId);
+      const appendBlock = (window)?.coachAppendBlockMessage;
+      if (typeof appendBlock === 'function') {
+        const { coachMessageId } = appendBlock(history, userMessageId, coachPreflightVerdict);
         // ...persist via updateChatById, clear input...
       } else {
-        toast.error(`Coach blocked: ${coachPreflightVerdict.rationale}`);
+        toast.error(`Coach blocked: ${coachPreflightVerdict.rationale ?? 'policy violation'}`);
       }
       return;
+    }
+    if (coachPreflightVerdict?.action === 'none' && coachPreflightVerdict.evaluated) {
+      (window)?.markCoachApprovedPre?.(userMessageId, history);
+    } else {
+      (window)?.clearCoachBadge?.(userMessageId);
     }
   }
   // ... existing body ...
 ```
 
-Change (approval path, after user message is appended to history):
+Change (history hydration, on chat load):
 ```svelte
-history.messages[userMessageId] = userMessage;
-history.currentId = userMessageId;
-// ...existing childrenIds wiring...
-
-// [coach] Mark user message as coach-approved (pre-flight passed).
-if (coachPreflightVerdict?.action === 'none' && coachPreflightVerdict.evaluated) {
-  const setApproval = (window)?.setCoachApproval;
-  if (typeof setApproval === 'function') setApproval(userMessageId, 'pre');
-}
+// ...existing history load...
+(window)?.coachHydrateFromHistory?.(history);
 ```
 
-`coachPreflight`, `coachInsertBlockExchange` and `setCoachApproval` are
-installed on `window` by `src/lib/coach/init.ts`; all three hooks stay
-dumb and fail open if coach internals aren't loaded yet.
+All hooks (`coachPreflight`, `coachAppendBlockMessage`,
+`markCoachReviewingPre`, `markCoachApprovedPre`, `clearCoachBadge`,
+`coachHydrateFromHistory`) are installed on `window` by
+`src/lib/coach/init.ts`. They stay dumb and fail open if coach internals
+aren't loaded yet.
 
 Grep anchors:
 - `grep -nF "coachPreflight" src/lib/components/chat/Chat.svelte` returns 2+ lines.
-- `grep -nF "coachInsertBlockExchange" src/lib/components/chat/Chat.svelte` returns 1 line.
-- `grep -nF "setCoachApproval" src/lib/components/chat/Chat.svelte` returns 1 line.
+- `grep -nF "coachAppendBlockMessage" src/lib/components/chat/Chat.svelte` returns 1 line.
+- `grep -nF "markCoachReviewingPre" src/lib/components/chat/Chat.svelte` returns 1 line.
+- `grep -nF "markCoachApprovedPre" src/lib/components/chat/Chat.svelte` returns 1 line.
+- `grep -nF "coachHydrateFromHistory" src/lib/components/chat/Chat.svelte` returns 1 line.
 
 ---
 

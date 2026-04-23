@@ -47,25 +47,130 @@ live at `chat.history.messages[<id>].coach_authored = true`.
 
 ## Evaluation flow
 
+Coach runs at three distinct points in a chat's lifecycle. Only the first
+two trigger an LLM call; the third is a pure UI replay.
+
 ```
-assistant stream finishes in Chat.svelte
-   → window dispatch `coach:chat:finish` with chat_id + message_id
-   → src/lib/coach/init.ts handler
-     → POST /api/v1/coach/evaluate { chat_id, message_id, conversation }
-   → backend/open_webui/coach/service.py
-     - loads user's CoachConfig + active policies
-     - builds one coach-LLM call, all policies concatenated
-     - parses JSON verdict: { action: none|flag|followup, ... }
-     - action=flag     → persists the flag in chat.chat JSON
-     - action=followup → returns verdict; frontend injects the follow-up
-   → init.ts
-     - flag     → re-renders via FlagOverlay (MutationObserver on [data-message-id])
-     - followup → dispatches `coach:followup`; Chat.svelte submits it
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │                                                                      │
+  │  EVENT 1 — User hits send       ◀── Chat.svelte:submitPrompt ──▶     │
+  │                                                                      │
+  │   Input collected by frontend (src/lib/coach/init.ts:coachPreflight) │
+  │   • active policies for this user                                    │
+  │   • conversation tail, linearized from history DAG via parentId,     │
+  │     up to 12 turns (maxTurns*2); the candidate user message is       │
+  │     appended at the end.                                             │
+  │                                                                      │
+  │   POST /api/v1/coach/evaluate  { phase:"pre",                        │
+  │                                   chat_id, conversation:[…] }       │
+  │                                                                      │
+  │   Coach LLM sees  (build_preflight_prompt):                          │
+  │     system: PREFLIGHT_SYSTEM_PROMPT  (prompts.py:79)                 │
+  │     user:                                                            │
+  │       Active policies:                                               │
+  │         [<id>] <title> — <body>                                      │
+  │         …                                                            │
+  │       Prior conversation (last ≤10 turns, may be empty):             │
+  │         user: …                                                      │
+  │         assistant: …                                                 │
+  │       Pending user query under review:                               │
+  │         "<candidate>"                                                │
+  │                                                                      │
+  │   Coach returns  { action: "none" | "block",                         │
+  │                    policy_id?, severity?, rationale? }               │
+  │                                                                      │
+  │   Frontend reacts:                                                   │
+  │     action=block  → window.coachAppendBlockMessage injects an        │
+  │                     assistant-shaped message (rule + rationale),     │
+  │                     LLM call is NOT made, input is cleared.          │
+  │     action=none   → markCoachApprovedPre stamps a 🛡 on the user     │
+  │                     message; flow continues to normal submit.        │
+  │     error / off   → fail open, chat proceeds.                        │
+  │                                                                      │
+  │  ───────────────────────────────────────────────────────────────     │
+  │                                                                      │
+  │  EVENT 2 — Assistant stream finishes  ◀── Chat.svelte:chat:finish ▶  │
+  │                                                                      │
+  │   Chat.svelte re-dispatches as window `coach:chat:finish`;           │
+  │   init.ts:onChatFinish picks it up and:                              │
+  │   • re-linearizes history (now includes the just-completed reply)    │
+  │   • last turn is the assistant message under review.                 │
+  │                                                                      │
+  │   POST /api/v1/coach/evaluate  { phase:"post",                       │
+  │                                   chat_id, message_id,               │
+  │                                   conversation:[…] }                 │
+  │                                                                      │
+  │   Coach LLM sees  (build_evaluation_prompt):                         │
+  │     system: SYSTEM_PROMPT  (prompts.py:12)                           │
+  │     user:                                                            │
+  │       Active policies:                                               │
+  │         [<id>] <title> — <body>                                      │
+  │         …                                                            │
+  │       Recent conversation (most recent last, ≤10 turns):             │
+  │         user: …                                                      │
+  │         assistant: …                                                 │
+  │         user (coach): …   ← marker for coach-authored follow-ups     │
+  │         …                                                            │
+  │         assistant: <reply under review>                              │
+  │                                                                      │
+  │   Coach returns  { action: "none" | "flag" | "followup",             │
+  │                    policy_id?, severity?, rationale?,                │
+  │                    followup_text? }                                  │
+  │                                                                      │
+  │   Service-side loop guard (service.py):                              │
+  │     if prior user turn was coach_authored → downgrade followup→flag  │
+  │                                                                      │
+  │   Persistence (router._persist_coach_annotation):                    │
+  │     action=none     → chat.history.messages[message_id].coach =      │
+  │                       {type:"approved", phase:"post", policy_count}  │
+  │     action=flag     → chat.history.messages[message_id].coach =      │
+  │                       {type:"flag", severity, rationale, policy_id}  │
+  │     action=followup → no persistence; frontend will replay           │
+  │                                                                      │
+  │   Frontend reacts:                                                   │
+  │     none     → setApproval (🛡 chip / shield on assistant msg)       │
+  │     flag     → setFlag (⚑ pill, styled by severity)                  │
+  │     followup → dispatches window `coach:followup` →                  │
+  │                Chat.svelte re-submits followup_text with             │
+  │                coachAuthored=true on the new user turn.              │
+  │                                                                      │
+  │  ───────────────────────────────────────────────────────────────     │
+  │                                                                      │
+  │  EVENT 3 — Chat loaded  ◀── Chat.svelte:initChatHandler / switch ▶   │
+  │                                                                      │
+  │   No LLM call. Pure UI replay of what was persisted.                 │
+  │                                                                      │
+  │   Chat.svelte calls window.coachHydrateFromHistory(history).         │
+  │   init.ts walks history.messages and for each one with a .coach      │
+  │   field:                                                             │
+  │     type="flag"     → setFlag (repopulates the flag store)           │
+  │     type="approved" → setApproval (repopulates the chip store)       │
+  │     type="block"    → no overlay — the block message's body already  │
+  │                       carries the full explanation.                  │
+  │                                                                      │
+  │   Overlays (FlagOverlay / BadgeOverlay, or the active variant)       │
+  │   re-anchor to [data-message-id] nodes and paint.                    │
+  │                                                                      │
+  └──────────────────────────────────────────────────────────────────────┘
 ```
 
-Infinite-loop protection: if the preceding user message is already
-`coach_authored=true`, service.py downgrades any `followup` verdict to `flag`.
-Max chain length 1 (configurable later).
+Additional guardrails that fire across these events:
+
+- **Demo mode** (service.py): when `cfg.demo_mode=True`, the LLM call is
+  skipped entirely. Pre-flight uses `demo:block` / hiring keyword to
+  produce `block`, else `none`. Post-flight rotates flag → followup →
+  none per user, or triggers on `demo:flag` / `demo:followup` /
+  `demo:critical` / `demo:none` keywords in the last user turn.
+- **Conversation window**: backend truncates to the last 10 turns before
+  rendering (`prompts.format_conversation`). Frontend linearizes up to
+  12 turns; the extra is harmless — the server trim wins.
+- **Fail open**: any error (evaluator exception, LLM timeout, malformed
+  JSON) collapses to `action=none`. The chat is never blocked by coach
+  failing; worst case the coach just produces no signal that turn.
+- **Concurrency**: Event 2 writes into `chat.chat` with no transaction
+  boundary; two evaluates racing on the same message can lose one
+  annotation. Frontend does not parallelize evaluate calls on the same
+  message, so this is tolerated.
 
 ## Local dev
 
@@ -299,9 +404,6 @@ returns `{action: ...}` with whatever verdict the coach LLM produced.
 
 ## Known limitations (Phase 7 backlog)
 
-- Persisted flags (in `chat.chat.history`) do not re-surface in the UI on
-  a page reload until another message is sent in that chat. Need a
-  `coach:chat:loaded` event dispatched when Chat.svelte hydrates history.
 - Cypress e2e tests not yet written (Phase 7 — upstream harness is
   broken and needs fixing first).
 - Coach-authored user messages are not visually distinguished from
