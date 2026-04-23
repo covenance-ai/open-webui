@@ -41,6 +41,7 @@ class CoachEvent:
     error: Optional[str]
     chat_id: Optional[str] = None
     message_id: Optional[str] = None
+    phase: str = 'post'  # 'pre' (user query screen) | 'post' (reply review)
 
 
 @dataclass
@@ -83,6 +84,7 @@ def record(
     error: Optional[str],
     chat_id: Optional[str] = None,
     message_id: Optional[str] = None,
+    phase: str = 'post',
 ) -> CoachEvent:
     evt = CoachEvent(
         id=str(uuid.uuid4()),
@@ -99,6 +101,7 @@ def record(
         error=error,
         chat_id=chat_id,
         message_id=message_id,
+        phase=phase,
     )
     with _lock:
         _buffers[user_id].append(evt)

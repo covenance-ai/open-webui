@@ -432,7 +432,7 @@ async def evaluate(
     return await run_core(
         user_id=user_id,
         enabled=cfg.enabled,
-        demo_mode=bool(getattr(cfg, 'demo_mode', False)),
+        demo_mode=cfg.demo_mode,
         coach_model_id=cfg.coach_model_id,
         policies=policies,
         conversation=conversation,

@@ -310,3 +310,7 @@ dist
 cypress/videos
 cypress/screenshots
 .vscode/settings.json
+
+# local agent tooling (not part of the fork)
+.claude/
+

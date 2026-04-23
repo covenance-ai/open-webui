@@ -320,6 +320,7 @@ async def evaluate(
         error=trace.llm_error,
         chat_id=body.chat_id,
         message_id=body.message_id,
+        phase=body.phase,
     )
 
     coach_events.record_detail(

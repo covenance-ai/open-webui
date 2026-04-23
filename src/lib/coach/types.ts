@@ -59,6 +59,7 @@ export interface CoachEvent {
 	error: string | null;
 	chat_id: string | null;
 	message_id: string | null;
+	phase: 'pre' | 'post';
 }
 
 export interface CoachPolicySnapshot {

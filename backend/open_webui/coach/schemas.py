@@ -150,3 +150,4 @@ class CoachEventResponse(BaseModel):
     error: Optional[str] = None
     chat_id: Optional[str] = None
     message_id: Optional[str] = None
+    phase: str = 'post'  # 'pre' | 'post'
