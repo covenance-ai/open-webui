@@ -20,11 +20,21 @@ const config = {
 		// poll for new version name every 60 seconds (to trigger reload mechanic in +layout.svelte)
 		version: {
 			name: (() => {
+				// Preferred source: .build-sha written by deploy.sh before the
+				// Docker build. Inside the container we have no .git dir
+				// (Dockerfile does COPY . .) so git rev-parse fails and we
+				// used to fall through to package.json's version ("0.9.1") —
+				// which never changes between our deploys, so the version-
+				// change detection silently never fired.
+				try {
+					const sha = fs.readFileSync(new URL('./.build-sha', import.meta.url), 'utf8').trim();
+					if (sha) return sha;
+				} catch {
+					// no .build-sha — fall through
+				}
 				try {
 					return child_process.execSync('git rev-parse HEAD').toString().trim();
 				} catch {
-					// if git is not available, fallback to package.json version
-					// or current timestamp
 					try {
 						return (
 							JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8'))

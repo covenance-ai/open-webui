@@ -1148,6 +1148,25 @@
 	</div>
 {/if}
 
+<!-- New-version banner. SvelteKit's `updated.current` becomes true when
+     /_app/version.json differs from the version the app was loaded with.
+     Previously the app only acted on this via beforeNavigate (requires a
+     navigation), so users on long-lived chat pages never got the hint.
+     This banner shows immediately on detection and offers a one-click
+     reload that unregisters any stale service workers first. -->
+{#if updated.current}
+	<div class="coach-update-banner" role="status" aria-live="polite">
+		<span>A new version is available.</span>
+		<button
+			type="button"
+			on:click={async () => {
+				await unregisterServiceWorkers();
+				location.reload();
+			}}>Reload</button
+		>
+	</div>
+{/if}
+
 {#if loaded}
 	{#if $isApp}
 		<div class="flex flex-row h-screen">
@@ -1178,3 +1197,35 @@
 	position="top-right"
 	closeButton
 />
+
+<style>
+	.coach-update-banner {
+		position: fixed;
+		top: 12px;
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 60;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.5rem 0.875rem;
+		border-radius: 9999px;
+		background: #1f2937;
+		color: #f9fafb;
+		font-size: 13px;
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+	}
+	.coach-update-banner button {
+		background: #10b981;
+		color: #fff;
+		border: none;
+		padding: 0.25rem 0.625rem;
+		border-radius: 9999px;
+		font: inherit;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.coach-update-banner button:hover {
+		background: #059669;
+	}
+</style>
