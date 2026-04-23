@@ -314,3 +314,6 @@ cypress/screenshots
 # local agent tooling (not part of the fork)
 .claude/
 
+# SHA written by deploy.sh into the build context (read by
+# svelte.config.js for kit.version.name). Regenerated on every run.
+.build-sha
