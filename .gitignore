@@ -1,5 +1,8 @@
 x.py
 yarn.lock
+# scripts/coach-demo-up.sh runtime artefacts
+.coach-demo-logs/
+data_coach_demo/
 .DS_Store
 node_modules
 /build

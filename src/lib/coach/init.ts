@@ -347,6 +347,30 @@ function persistMessageCoach(
 	if (msg) (msg as unknown as { coach?: unknown }).coach = coach;
 }
 
+// After a fresh chat is created, Chat.svelte calls this to replace the
+// placeholder chat_id=null on already-recorded coach events with the
+// real id — otherwise the "THIS CHAT" rail filter hides them. We have
+// to update both history (persisted) and the live store (what the rail
+// reads right now).
+export function coachBackfillChatId(
+	history: UpstreamHistory | undefined,
+	newChatId: string
+): void {
+	if (!history || !newChatId) return;
+	const events = history.coach_events ?? [];
+	const touchedIds = new Set<string>();
+	for (const ev of events) {
+		if (ev && !ev.chat_id) {
+			ev.chat_id = newChatId;
+			touchedIds.add(ev.id);
+		}
+	}
+	if (touchedIds.size === 0) return;
+	coachEvents.update((live) =>
+		live.map((e) => (touchedIds.has(e.id) ? { ...e, chat_id: newChatId } : e))
+	);
+}
+
 function wireEvaluator() {
 	if (evalWired || typeof window === 'undefined') return;
 	evalWired = true;
@@ -758,6 +782,7 @@ if (typeof window !== 'undefined') {
 		markCoachApprovedPre: typeof markCoachApprovedPre;
 		clearCoachBadge: typeof clearCoachBadge;
 		coachHydrateFromHistory: typeof coachHydrateFromHistory;
+		coachBackfillChatId: typeof coachBackfillChatId;
 	};
 	w.coachPreflight = coachPreflight;
 	w.coachAppendBlockMessage = coachAppendBlockMessage;
@@ -765,4 +790,5 @@ if (typeof window !== 'undefined') {
 	w.markCoachApprovedPre = markCoachApprovedPre;
 	w.clearCoachBadge = clearCoachBadge;
 	w.coachHydrateFromHistory = coachHydrateFromHistory;
+	w.coachBackfillChatId = coachBackfillChatId;
 }

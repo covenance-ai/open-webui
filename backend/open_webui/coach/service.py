@@ -229,6 +229,7 @@ def _scripted_verdict(
     user_id: str,
     conversation: list[ConversationTurn],
     phase: str = 'post',
+    policies: Optional[list[CoachPolicyResponse]] = None,
 ) -> EvaluateResponse:
     """Produce a demo-mode verdict.
 
@@ -246,6 +247,11 @@ def _scripted_verdict(
     - ``demo:followup`` → coach-authored follow-up.
     - ``demo:none``     → silent no-op.
     - otherwise         → rotate flag → followup → none.
+
+    When ``policies`` is supplied (run_core always passes the active set),
+    the block verdict cites the first policy's id so the frontend's block
+    card renders the real title / body / explanation_url instead of the
+    generic "Policy violation" fallback.
     """
     last_user = next(
         (t.content for t in reversed(conversation) if t.role == 'user'),
@@ -256,12 +262,15 @@ def _scripted_verdict(
     if 'demo:none' in text:
         return EvaluateResponse(action='none')
 
+    first_policy_id = policies[0].id if policies else None
+
     if phase == 'pre':
         triggered = 'demo:block' in text or any(k in text for k in _HIRING_KEYWORDS)
         if triggered:
             return EvaluateResponse(
                 action='block',
                 severity='critical',
+                policy_id=first_policy_id,
                 rationale=(
                     'This request appears to involve using an LLM for hiring '
                     'decisions, which your coach policy forbids. Please handle '
@@ -353,7 +362,7 @@ async def run_core(
     if demo_mode:
         trace.active_policies = _policies_snapshot(policies)
         trace.policy_count = len(policies)
-        verdict = _scripted_verdict(user_id, conversation, phase=phase)
+        verdict = _scripted_verdict(user_id, conversation, phase=phase, policies=policies)
         if (
             phase == 'post'
             and verdict.action == 'followup'

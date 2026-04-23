@@ -13,6 +13,7 @@ import { coachFlags } from './stores/flags';
 import { coachPolicies } from './stores/policies';
 import {
 	coachAppendBlockMessage,
+	coachBackfillChatId,
 	coachHydrateFromHistory,
 	composeCoachBlockFallback,
 	markCoachApprovedPre,
@@ -351,6 +352,42 @@ describe('coachHydrateFromHistory', () => {
 		} as never;
 		coachHydrateFromHistory(history);
 		expect(get(coachEvents)).toHaveLength(1);
+	});
+
+	it('coachBackfillChatId rewrites null chat_id on events after chat creation', () => {
+		// The block flow runs preflight before the chat has an id; the
+		// events get chat_id=null and would be hidden from the rail's
+		// per-chat view until the chat exists and we backfill.
+		const eventA = {
+			id: 'ev-a',
+			user_id: '',
+			ts_ms: 1_000,
+			status: 'ok' as const,
+			action: 'block',
+			reason: null,
+			model_id: null,
+			policy_count: 1,
+			duration_ms: 0,
+			tokens_in: null,
+			tokens_out: null,
+			error: null,
+			chat_id: null,
+			message_id: null,
+			phase: 'pre' as const
+		};
+		const eventB = { ...eventA, id: 'ev-b', chat_id: 'other-chat' };
+		const history = { messages: {}, coach_events: [eventA, eventB] } as never;
+		coachEvents.set([eventA, eventB]);
+
+		coachBackfillChatId(history, 'new-chat');
+
+		const h = history as { coach_events: typeof eventA[] };
+		expect(h.coach_events[0].chat_id).toBe('new-chat');
+		// The already-scoped event must not be touched.
+		expect(h.coach_events[1].chat_id).toBe('other-chat');
+		const live = get(coachEvents);
+		expect(live.find((e) => e.id === 'ev-a')?.chat_id).toBe('new-chat');
+		expect(live.find((e) => e.id === 'ev-b')?.chat_id).toBe('other-chat');
 	});
 
 	it('type=block is not mirrored into either store (content speaks for itself)', () => {

@@ -2053,6 +2053,21 @@
 							// most wants to revisit later.
 							if (!$chatId) {
 								await initChatHandler(history);
+								// [coach] Preflight ran before the chat had an
+								// id, so its coach_events rows were recorded
+								// with chat_id=null. Backfill so the rail's
+								// per-chat filter finds them, and persist the
+								// updated history so the backfill survives a
+								// reload.
+								(window)?.coachBackfillChatId?.(history, $chatId);
+								try {
+									await updateChatById(localStorage.token, $chatId, {
+										history,
+										messages: createMessagesList(history, coachMessageId)
+									});
+								} catch (err) {
+									console.warn('[coach] failed to persist backfilled chat_id on events:', err);
+								}
 							} else {
 								chat = await updateChatById(localStorage.token, $chatId, {
 									models: selectedModels,
