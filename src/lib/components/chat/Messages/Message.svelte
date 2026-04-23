@@ -11,6 +11,7 @@
 	import MultiResponseMessages from './MultiResponseMessages.svelte';
 	import ResponseMessage from './ResponseMessage.svelte';
 	import UserMessage from './UserMessage.svelte';
+	import CoachBlockMessage from '$lib/coach/components/CoachBlockMessage.svelte';
 
 	export let chatId;
 	export let selectedModels = [];
@@ -52,7 +53,14 @@
 		: 'max-w-5xl'} mx-auto rounded-lg group message-listitem"
 >
 	{#if history.messages[messageId]}
-		{#if history.messages[messageId].role === 'user'}
+		{#if history.messages[messageId].coach?.type === 'block'}
+			<!-- Coach-authored block reply: render a dedicated card instead
+			     of ResponseMessage so the markdown pipeline doesn't escape
+			     the HTML, and so none of the assistant-message chrome
+			     (rate / regenerate / continue) appears for something that
+			     never came from the LLM. -->
+			<CoachBlockMessage message={history.messages[messageId]} />
+		{:else if history.messages[messageId].role === 'user'}
 			<UserMessage
 				{user}
 				{chatId}

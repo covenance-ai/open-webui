@@ -2040,15 +2040,28 @@
 					// which is still currentId in the stale view), so the
 					// send button shows as a stop button indefinitely.
 					history = history;
-					if (!$temporaryChatEnabled && $chatId) {
+					if (!$temporaryChatEnabled) {
 						try {
-							chat = await updateChatById(localStorage.token, $chatId, {
-								models: selectedModels,
-								messages: createMessagesList(history, coachMessageId),
-								history,
-								params,
-								files: chatFiles
-							});
+							// [coach] If this is the first message in a fresh
+							// chat, $chatId is still empty — initChatHandler
+							// is what usually creates the chat on the first
+							// assistant reply. Blocked requests never reach
+							// that code path, so create the chat here instead.
+							// Without this, a blocked-on-first-message chat
+							// would vanish from the sidebar on refresh even
+							// though it is exactly the interaction a user
+							// most wants to revisit later.
+							if (!$chatId) {
+								await initChatHandler(history);
+							} else {
+								chat = await updateChatById(localStorage.token, $chatId, {
+									models: selectedModels,
+									messages: createMessagesList(history, coachMessageId),
+									history,
+									params,
+									files: chatFiles
+								});
+							}
 						} catch (err) {
 							console.warn('[coach] failed to persist block exchange:', err);
 						}

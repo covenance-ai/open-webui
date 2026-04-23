@@ -19,10 +19,11 @@ import { clearApproval, setApproval } from './stores/approvals';
 import { coachConfig } from './stores/config';
 import { coachPerChatEnabled, isCoachEnabledForChat } from './stores/perChat';
 import { setBlockBanner } from './stores/blockBanner';
-import { refreshCoachEvents } from './stores/events';
+import { coachEvents, refreshCoachEvents } from './stores/events';
 import { coachFlags, setFlag } from './stores/flags';
 import { coachPolicies } from './stores/policies';
 import { flashCoachResult, setCoachProcessing } from './stores/status';
+import type { CoachEvent } from './types';
 
 function uuidv4(): string {
 	if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -76,6 +77,60 @@ interface UpstreamMessage {
 interface UpstreamHistory {
 	messages: Record<string, UpstreamMessage>;
 	currentId?: string | null;
+	// Persisted activity log for this chat — mirror of the in-memory
+	// /coach/events feed, scoped to this conversation. Written from the
+	// evaluate handlers, read by coachHydrateFromHistory on chat load
+	// so the rail survives reloads and container restarts (the backend
+	// buffer does not survive either).
+	coach_events?: CoachEvent[];
+}
+
+// Append one coach event to a chat's persisted history.coach_events
+// array AND mirror it into the live coachEvents store so the rail
+// updates immediately without waiting for the next refresh. Safe to
+// call with a null/undefined history (no-op).
+function recordCoachEventForChat(
+	history: UpstreamHistory | null | undefined,
+	event: CoachEvent
+): void {
+	if (history) {
+		history.coach_events = [...(history.coach_events ?? []), event];
+	}
+	coachEvents.update((existing) => {
+		if (existing.some((e) => e.id === event.id)) return existing;
+		// Newest first — matches the backend list ordering.
+		return [event, ...existing];
+	});
+}
+
+function buildCoachEvent(partial: {
+	phase: 'pre' | 'post';
+	status: 'ok' | 'error' | 'skipped' | 'demo';
+	action?: string | null;
+	reason?: string | null;
+	policy_count?: number;
+	chat_id?: string | null;
+	message_id?: string | null;
+	error?: string | null;
+	model_id?: string | null;
+}): CoachEvent {
+	return {
+		id: uuidv4(),
+		user_id: '', // client-synthesized; real user_id lives on backend copy.
+		ts_ms: Date.now(),
+		status: partial.status,
+		action: partial.action ?? null,
+		reason: partial.reason ?? null,
+		model_id: partial.model_id ?? null,
+		policy_count: partial.policy_count ?? 0,
+		duration_ms: 0,
+		tokens_in: null,
+		tokens_out: null,
+		error: partial.error ?? null,
+		chat_id: partial.chat_id ?? null,
+		message_id: partial.message_id ?? null,
+		phase: partial.phase
+	};
 }
 
 function linearize(history: UpstreamHistory | undefined, maxTurns = 12) {
@@ -161,12 +216,25 @@ async function onChatFinish(e: Event) {
 		// surfaced via the status flash + the coach events log.
 		if (detail?.messageId) clearApproval(detail.messageId);
 		flashCoachResult('error', chatId);
+		recordCoachEventForChat(
+			detail?.history ?? null,
+			buildCoachEvent({
+				phase: 'post',
+				status: 'error',
+				chat_id: chatId,
+				message_id: detail?.messageId ?? null,
+				error: err instanceof Error ? err.message : String(err),
+				policy_count: cfg?.active_policy_ids?.length ?? 0
+			})
+		);
 		return;
 	} finally {
 		// Refresh the activity log regardless of verdict — error rows are the
 		// whole point of the strip.
 		void refreshCoachEvents(token);
 	}
+
+	const policyCount = cfg?.active_policy_ids?.length ?? 0;
 
 	// Reflect the verdict in the status indicator.
 	if (!verdict || verdict.action === 'none') {
@@ -179,10 +247,29 @@ async function onChatFinish(e: Event) {
 			setApproval(detail.messageId, {
 				kind: 'approved',
 				phase: 'post',
-				policyCount: cfg?.active_policy_ids?.length ?? 0,
+				policyCount,
 				createdAt: Date.now()
 			});
+			// Persist on the assistant message so coachHydrateFromHistory
+			// re-populates the approval chip after a reload.
+			persistMessageCoach(detail.history, detail.messageId, {
+				type: 'approved',
+				phase: 'post',
+				policy_count: policyCount,
+				created_at: Math.floor(Date.now() / 1000)
+			});
 		}
+		recordCoachEventForChat(
+			detail?.history ?? null,
+			buildCoachEvent({
+				phase: 'post',
+				status: 'ok',
+				action: 'none',
+				policy_count: policyCount,
+				chat_id: chatId,
+				message_id: detail?.messageId ?? null
+			})
+		);
 		return;
 	}
 
@@ -205,10 +292,39 @@ async function onChatFinish(e: Event) {
 			policyId: verdict.policy_id ?? null,
 			createdAt: Date.now()
 		});
+		persistMessageCoach(detail.history, detail.messageId, {
+			type: 'flag',
+			severity: verdict.severity ?? 'warn',
+			rationale: verdict.rationale,
+			policy_id: verdict.policy_id ?? null,
+			created_at: Math.floor(Date.now() / 1000)
+		});
+		recordCoachEventForChat(
+			detail.history ?? null,
+			buildCoachEvent({
+				phase: 'post',
+				status: 'ok',
+				action: 'flag',
+				policy_count: policyCount,
+				chat_id: chatId,
+				message_id: detail.messageId
+			})
+		);
 		return;
 	}
 
 	if (verdict.action === 'followup' && typeof verdict.followup_text === 'string') {
+		recordCoachEventForChat(
+			detail?.history ?? null,
+			buildCoachEvent({
+				phase: 'post',
+				status: 'ok',
+				action: 'followup',
+				policy_count: policyCount,
+				chat_id: chatId,
+				message_id: detail?.messageId ?? null
+			})
+		);
 		window.dispatchEvent(
 			new CustomEvent('coach:followup', {
 				detail: {
@@ -218,6 +334,17 @@ async function onChatFinish(e: Event) {
 			})
 		);
 	}
+}
+
+// Set a structured coach annotation on a single message so it gets
+// re-hydrated on reload. Used for approved/flag/block message shields.
+function persistMessageCoach(
+	history: UpstreamHistory | undefined | null,
+	messageId: string,
+	coach: Record<string, unknown>
+): void {
+	const msg = history?.messages?.[messageId];
+	if (msg) (msg as unknown as { coach?: unknown }).coach = coach;
 }
 
 function wireEvaluator() {
@@ -384,10 +511,22 @@ export async function coachPreflight(
 	} catch (err) {
 		console.warn('[coach] preflight failed:', err);
 		flashCoachResult('error', scope);
+		recordCoachEventForChat(
+			history ?? null,
+			buildCoachEvent({
+				phase: 'pre',
+				status: 'error',
+				chat_id: scope,
+				error: err instanceof Error ? err.message : String(err),
+				policy_count: cfg?.active_policy_ids?.length ?? 0
+			})
+		);
 		return { action: 'error', evaluated: true };
 	} finally {
 		void refreshCoachEvents(token);
 	}
+
+	const prePolicyCount = cfg?.active_policy_ids?.length ?? 0;
 
 	if (verdict?.action === 'block') {
 		flashCoachResult('blocked', scope);
@@ -407,6 +546,16 @@ export async function coachPreflight(
 				at: Date.now()
 			});
 		}
+		recordCoachEventForChat(
+			history ?? null,
+			buildCoachEvent({
+				phase: 'pre',
+				status: 'ok',
+				action: 'block',
+				policy_count: prePolicyCount,
+				chat_id: scope
+			})
+		);
 		return {
 			action: 'block',
 			evaluated: true,
@@ -415,6 +564,16 @@ export async function coachPreflight(
 		};
 	}
 	flashCoachResult('ok', scope);
+	recordCoachEventForChat(
+		history ?? null,
+		buildCoachEvent({
+			phase: 'pre',
+			status: 'ok',
+			action: 'none',
+			policy_count: prePolicyCount,
+			chat_id: scope
+		})
+	);
 	return { action: 'none', evaluated: true };
 }
 
@@ -422,72 +581,28 @@ export async function coachPreflight(
 // When pre-flight blocks, a toast disappears in seconds. The user
 // needs unlimited time to read the rule and the rationale, so we
 // instead place a coach-authored "assistant" message into the chat
-// itself, in the same slot the AI reply would have occupied.
+// itself, in the same slot the AI reply would have occupied. The
+// actual visuals live in CoachBlockMessage.svelte — here we only
+// prepare a plain-text fallback for `message.content` (exports,
+// copy/paste, non-custom viewers) and stash a structured snapshot on
+// `message.coach` for the component to read.
 
 export interface PreflightBlockDetail {
 	rationale?: string | null;
 	policy_id?: string | null;
 }
 
-export function composeCoachBlockMarkdown(verdict: PreflightBlockDetail): string {
-	// Renders as the assistant-reply markdown in-chat. Open WebUI's
-	// markdown pipeline supports GFM + inline HTML, so we use a styled
-	// <div> card for strong visual hierarchy (policy title huge,
-	// rationale as a clearly-marked quote, explanation link as a
-	// prominent button-like link). Markdown alone reads like plain
-	// text; the HTML card makes the block impossible to miss.
+export function composeCoachBlockFallback(verdict: PreflightBlockDetail): string {
+	// Plain markdown fallback so the message still reads sensibly outside
+	// the custom Svelte renderer (e.g. when a chat is exported to JSON
+	// and replayed elsewhere).
 	const policy = (get(coachPolicies) ?? []).find((p) => p.id === verdict.policy_id) ?? null;
 	const title = policy?.title ?? 'Policy violation';
-	const body = policy?.body ?? '';
-	const url = policy?.explanation_url ?? null;
 	const rationale = (verdict.rationale ?? '').trim();
-
-	// Minimal inline styles — the markdown renderer usually strips
-	// <style>, but style=".." attributes survive. Uses colors that
-	// read well on both light and dark themes (red/amber tones,
-	// currentColor for text blends in).
-	const esc = (s: string) =>
-		s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-	const cardStyle = [
-		'border-left: 4px solid #dc2626',
-		'background: linear-gradient(180deg, rgba(254,226,226,0.55), rgba(254,226,226,0.15))',
-		'padding: 14px 18px',
-		'border-radius: 10px',
-		'margin: 4px 0 8px'
-	].join(';');
-
-	const parts: string[] = [];
-	parts.push(`<div style="${cardStyle}">`);
-	parts.push(
-		'<div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#991b1b;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px">'
-	);
-	parts.push('<span aria-hidden="true">⛔</span>');
-	parts.push('<span>Coach blocked this request</span>');
-	parts.push('</div>');
-	parts.push(
-		`<div style="font-size:17px;font-weight:700;color:#7f1d1d;margin-bottom:10px;line-height:1.25">${esc(title)}</div>`
-	);
-	if (rationale) {
-		parts.push(
-			`<blockquote style="margin:0 0 10px;padding:8px 12px;border-left:3px solid rgba(185,28,28,0.4);background:rgba(255,255,255,0.5);font-style:italic;color:#7f1d1d;border-radius:0 6px 6px 0">${esc(rationale)}</blockquote>`
-		);
-	}
-	if (body) {
-		parts.push(
-			`<details style="margin-bottom:10px"><summary style="cursor:pointer;font-size:12px;opacity:0.75">Show full policy text</summary><div style="margin-top:6px;font-size:13px;line-height:1.5;white-space:pre-wrap">${esc(body)}</div></details>`
-		);
-	}
-	if (url) {
-		parts.push(
-			`<div><a href="${esc(url)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:6px 12px;border-radius:9999px;background:#dc2626;color:#fff;font-size:13px;font-weight:600;text-decoration:none">Read full explanation ↗</a></div>`
-		);
-	}
-	parts.push(
-		'<div style="margin-top:10px;font-size:11px;opacity:0.65">This response was written by the policy coach, not the LLM. Rephrase your request or take this task outside the assistant.</div>'
-	);
-	parts.push('</div>');
-	return parts.join('\n');
+	const lines = [`**⛔ Coach blocked this request — ${title}**`];
+	if (rationale) lines.push('', `> ${rationale}`);
+	if (policy?.explanation_url) lines.push('', `[Read full explanation](${policy.explanation_url})`);
+	return lines.join('\n');
 }
 
 // Appends a single coach-authored assistant turn as a child of an
@@ -502,12 +617,18 @@ export function coachAppendBlockMessage(
 	const ts = Math.floor(Date.now() / 1000);
 	const coachMessageId = uuidv4();
 
+	// Snapshot the policy so the block message renders identically on
+	// reload even if the policy is later edited or deleted. This is the
+	// same reason we persist assistant replies verbatim rather than
+	// re-querying the model.
+	const policy = (get(coachPolicies) ?? []).find((p) => p.id === verdict.policy_id) ?? null;
+
 	const coachMsg = {
 		id: coachMessageId,
 		parentId: parentUserMessageId,
 		childrenIds: [],
 		role: 'assistant' as const,
-		content: composeCoachBlockMarkdown(verdict),
+		content: composeCoachBlockFallback(verdict),
 		model: 'coach',
 		modelName: 'Policy coach',
 		modelIdx: 0,
@@ -518,7 +639,11 @@ export function coachAppendBlockMessage(
 		coach: {
 			type: 'block',
 			policy_id: verdict.policy_id ?? null,
-			rationale: verdict.rationale ?? null
+			policy_title: policy?.title ?? null,
+			policy_body: policy?.body ?? null,
+			policy_explanation_url: policy?.explanation_url ?? null,
+			rationale: verdict.rationale ?? null,
+			created_at: ts
 		}
 	};
 
@@ -575,7 +700,26 @@ export function clearCoachBadge(messageId: string): void {
 // was just loaded from the server. Called once per chat navigation via
 // window.coachHydrateFromHistory (Chat.svelte site).
 export function coachHydrateFromHistory(history: UpstreamHistory | undefined): void {
-	if (!history?.messages) return;
+	if (!history) return;
+
+	// Restore the per-chat activity log. The backend keeps events in
+	// memory only (see backend/coach/events.py) — after a container
+	// restart or a chat navigation the rail would otherwise forget what
+	// coach did in this conversation. Merge by id so a later
+	// refreshCoachEvents call (which may return the same events) stays
+	// idempotent.
+	if (Array.isArray(history.coach_events) && history.coach_events.length > 0) {
+		const persisted = history.coach_events;
+		coachEvents.update((live) => {
+			const seen = new Set(live.map((e) => e.id));
+			const merged = [...live];
+			for (const e of persisted) if (!seen.has(e.id)) merged.push(e);
+			merged.sort((a, b) => (b.ts_ms ?? 0) - (a.ts_ms ?? 0));
+			return merged;
+		});
+	}
+
+	if (!history.messages) return;
 	for (const [id, raw] of Object.entries(history.messages)) {
 		const msg = raw as { coach?: Record<string, unknown> } | undefined;
 		const c = msg?.coach;

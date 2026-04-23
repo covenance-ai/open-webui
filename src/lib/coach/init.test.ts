@@ -1,6 +1,6 @@
 // Pure-logic tests for the coach helpers exposed to Chat.svelte.
 // We don't mount components or hit the network here — just exercise
-// composeCoachBlockMarkdown and coachInsertBlockExchange against
+// composeCoachBlockFallback and coachInsertBlockExchange against
 // representative inputs to catch shape regressions.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -8,12 +8,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { get } from 'svelte/store';
 
 import { _resetCoachApprovalsForTests, coachApprovals } from './stores/approvals';
+import { coachEvents } from './stores/events';
 import { coachFlags } from './stores/flags';
 import { coachPolicies } from './stores/policies';
 import {
 	coachAppendBlockMessage,
 	coachHydrateFromHistory,
-	composeCoachBlockMarkdown,
+	composeCoachBlockFallback,
 	markCoachApprovedPre,
 	type PreflightBlockDetail
 } from './init';
@@ -32,28 +33,35 @@ beforeEach(() => {
 	coachPolicies.set([HIRING_POLICY]);
 	_resetCoachApprovalsForTests();
 	coachFlags.set({});
+	coachEvents.set([]);
 });
 
 afterEach(() => {
 	coachPolicies.set([]);
 	_resetCoachApprovalsForTests();
 	coachFlags.set({});
+	coachEvents.set([]);
 });
 
-describe('composeCoachBlockMarkdown', () => {
-	it('includes the policy title, body and rationale when policy is known', () => {
-		const md = composeCoachBlockMarkdown({
+describe('composeCoachBlockFallback', () => {
+	// The fallback is plain markdown meant for exports and non-custom
+	// viewers. The primary rendering lives in CoachBlockMessage.svelte
+	// and reads the structured snapshot from message.coach — so the
+	// fallback intentionally only carries the headline, rationale, and
+	// link (not the full policy body, which would bloat the stored
+	// message.content).
+	it('includes the policy title and rationale when policy is known', () => {
+		const md = composeCoachBlockFallback({
 			policy_id: 'pol-hiring',
 			rationale: 'You asked who to hire.'
 		});
 		expect(md).toContain('Coach blocked this request');
 		expect(md).toContain('No LLM for hiring decisions');
-		expect(md).toContain('EU AI Act');
 		expect(md).toContain('You asked who to hire.');
 	});
 
 	it('still produces something readable when the policy id is unknown', () => {
-		const md = composeCoachBlockMarkdown({
+		const md = composeCoachBlockFallback({
 			policy_id: 'no-such-policy',
 			rationale: 'redacted'
 		});
@@ -62,9 +70,9 @@ describe('composeCoachBlockMarkdown', () => {
 	});
 
 	it('omits the rationale block when no rationale was given', () => {
-		const md = composeCoachBlockMarkdown({ policy_id: 'pol-hiring', rationale: null });
+		const md = composeCoachBlockFallback({ policy_id: 'pol-hiring', rationale: null });
 		expect(md).toContain('No LLM for hiring decisions');
-		expect(md).not.toMatch(/coach's rationale/i);
+		expect(md).not.toMatch(/> /);
 	});
 });
 
@@ -106,6 +114,31 @@ describe('coachAppendBlockMessage', () => {
 
 		// User message gets the coach reply added as a sibling branch.
 		expect(h.messages[userMessageId].childrenIds).toContain(coachMessageId);
+	});
+
+	it('snapshots the policy title, body, and explanation url onto message.coach', () => {
+		// The snapshot is what CoachBlockMessage.svelte renders from, so a
+		// block message stays correct even if the policy is later edited
+		// or deleted — the same property we rely on for assistant replies.
+		const policyWithUrl = {
+			...HIRING_POLICY,
+			explanation_url: 'https://example.com/policy'
+		};
+		coachPolicies.set([policyWithUrl]);
+
+		const history = {
+			messages: {
+				'u1': { id: 'u1', role: 'user', content: 'q', parentId: null, childrenIds: [] }
+			},
+			currentId: 'u1'
+		} as never;
+		const { coachMessageId } = coachAppendBlockMessage(history, 'u1', verdict);
+
+		const coachMsg = (history as any).messages[coachMessageId];
+		expect(coachMsg.coach.policy_title).toBe('No LLM for hiring decisions');
+		expect(coachMsg.coach.policy_body).toContain('EU AI Act');
+		expect(coachMsg.coach.policy_explanation_url).toBe('https://example.com/policy');
+		expect(coachMsg.coach.created_at).toBeGreaterThan(0);
 	});
 
 	it('preserves existing siblings on the user message', () => {
@@ -221,6 +254,103 @@ describe('coachHydrateFromHistory', () => {
 		coachHydrateFromHistory(history);
 		expect(get(coachApprovals)).toEqual({});
 		expect(get(coachFlags)).toEqual({});
+	});
+
+	it('rehydrates history.coach_events into the coachEvents store', () => {
+		// The backend's /coach/events log is in-memory only, so without
+		// this step the "THIS CHAT" rail would forget what coach did in
+		// this conversation after a page reload or container restart.
+		const history = {
+			messages: {},
+			currentId: null,
+			coach_events: [
+				{
+					id: 'ev-1',
+					user_id: '',
+					ts_ms: 1_000,
+					status: 'ok',
+					action: 'block',
+					reason: null,
+					model_id: null,
+					policy_count: 2,
+					duration_ms: 0,
+					tokens_in: null,
+					tokens_out: null,
+					error: null,
+					chat_id: 'chat-abc',
+					message_id: null,
+					phase: 'pre'
+				},
+				{
+					id: 'ev-2',
+					user_id: '',
+					ts_ms: 2_000,
+					status: 'ok',
+					action: 'none',
+					reason: null,
+					model_id: null,
+					policy_count: 2,
+					duration_ms: 0,
+					tokens_in: null,
+					tokens_out: null,
+					error: null,
+					chat_id: 'chat-abc',
+					message_id: 'msg-1',
+					phase: 'post'
+				}
+			]
+		} as never;
+		coachHydrateFromHistory(history);
+		const events = get(coachEvents);
+		// Newest first.
+		expect(events.map((e) => e.id)).toEqual(['ev-2', 'ev-1']);
+	});
+
+	it('dedupes persisted events by id when merging with the live store', () => {
+		coachEvents.set([
+			{
+				id: 'ev-1',
+				user_id: '',
+				ts_ms: 1_000,
+				status: 'ok',
+				action: 'block',
+				reason: null,
+				model_id: null,
+				policy_count: 2,
+				duration_ms: 0,
+				tokens_in: null,
+				tokens_out: null,
+				error: null,
+				chat_id: 'chat-abc',
+				message_id: null,
+				phase: 'pre'
+			}
+		]);
+		const history = {
+			messages: {},
+			currentId: null,
+			coach_events: [
+				{
+					id: 'ev-1',
+					user_id: '',
+					ts_ms: 1_000,
+					status: 'ok',
+					action: 'block',
+					reason: null,
+					model_id: null,
+					policy_count: 2,
+					duration_ms: 0,
+					tokens_in: null,
+					tokens_out: null,
+					error: null,
+					chat_id: 'chat-abc',
+					message_id: null,
+					phase: 'pre'
+				}
+			]
+		} as never;
+		coachHydrateFromHistory(history);
+		expect(get(coachEvents)).toHaveLength(1);
 	});
 
 	it('type=block is not mirrored into either store (content speaks for itself)', () => {
