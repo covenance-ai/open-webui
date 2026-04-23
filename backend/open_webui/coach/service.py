@@ -42,7 +42,11 @@ from open_webui.coach.schemas import (
     CoachPolicyResponse,
     EvaluateResponse,
 )
-from open_webui.coach.storage import CoachConfigs, CoachPolicies
+# NOTE: storage is imported lazily inside evaluate() so this module can be
+# used by standalone scripts (scripts/coach_e2e.py) that want run_core
+# without pulling in the DB stack. Storage transitively imports
+# open_webui.internal.db, which eagerly creates an async engine at module
+# load — unwanted when run_core is the only thing the caller needs.
 
 log = logging.getLogger(__name__)
 
@@ -424,6 +428,7 @@ async def evaluate(
     phase: str = 'post',
 ) -> EvaluateResponse:
     """Load the user's config + policies and run the core algorithm."""
+    from open_webui.coach.storage import CoachConfigs, CoachPolicies
     cfg = CoachConfigs.get_or_default(user_id)
     visible = {p.id: p for p in CoachPolicies.list_visible(user_id)}
     policies: list[CoachPolicyResponse] = [
