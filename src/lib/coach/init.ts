@@ -254,7 +254,6 @@ async function mountForVariant(variant: CoachUIVariant) {
 		const mods: Array<{ default: unknown }> = [];
 		if (variant === 'chips') {
 			mods.push(await import('./overlay/FlagOverlay.svelte'));
-			mods.push(await import('./overlay/StatusOverlay.svelte'));
 			mods.push(await import('./overlay/BadgeOverlay.svelte'));
 		} else if (variant === 'rail') {
 			mods.push(await import('./ui/rail/RailMount.svelte'));
@@ -282,10 +281,26 @@ function subscribeVariant() {
 	});
 }
 
+// Always-on coach status light — a single bottom-right indicator that
+// shows off/waiting/processing/intervened regardless of UI variant.
+// The variant system only adds richer per-message surfaces on top; the
+// light exists so "is coach working?" is never in doubt.
+async function mountCoachLight() {
+	if (typeof window === 'undefined') return;
+	try {
+		const { mount } = await import('svelte');
+		const CoachLight = (await import('./components/CoachLight.svelte')).default;
+		mount(CoachLight as Parameters<typeof mount>[0], { target: document.body });
+	} catch (err) {
+		console.warn('[coach] CoachLight mount failed:', err);
+	}
+}
+
 // Wire up immediately (side-effect import time). bootstrap() kicks in as
 // soon as `user` becomes available.
 wireEvaluator();
 subscribeVariant();
+void mountCoachLight();
 
 user.subscribe((u) => {
 	if (u) {
