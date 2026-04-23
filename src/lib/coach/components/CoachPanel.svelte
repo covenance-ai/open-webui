@@ -22,10 +22,21 @@
 	import PolicyEditor from './PolicyEditor.svelte';
 	import PolicyList from './PolicyList.svelte';
 
+	// When rendered inside RailPanel (embedded=true), hide the sections
+	// the rail already owns (activity log, event inspector) to avoid
+	// double-rendering. Default false keeps standalone usage unchanged.
+	export let embedded = false;
+
 	// Collapse state persists in localStorage, matching the upstream pattern.
+	// When embedded in the rail, expand by default — the rail is the
+	// coach-primary surface, users expect the settings visible not hidden.
 	let expanded = false;
 
 	onMount(() => {
+		if (embedded) {
+			expanded = true;
+			return;
+		}
 		try {
 			expanded = localStorage.getItem('showCoachPanel') === 'true';
 		} catch {
@@ -333,7 +344,10 @@
 				▶ Playground (dry-run)
 			</button>
 
-			<!-- Activity log: per-user in-memory ring from /api/v1/coach/events -->
+			<!-- Activity log: per-user in-memory ring from /api/v1/coach/events.
+			     Hidden when embedded in the rail — the rail renders its own
+			     activity stream below this component. -->
+			{#if !embedded}
 			<div class="mt-1">
 				<div class="flex items-center justify-between text-gray-500 dark:text-gray-400 mb-0.5">
 					<button
@@ -413,6 +427,7 @@
 					{/if}
 				{/if}
 			</div>
+			{/if}
 		</div>
 	{/if}
 </div>

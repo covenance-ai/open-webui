@@ -21,6 +21,7 @@
 
 	import { chatId } from '$lib/stores';
 
+	import CoachPanel from '../../components/CoachPanel.svelte';
 	import { coachConfig } from '../../stores/config';
 	import { coachEvents } from '../../stores/events';
 	import { coachStatusByChat, type CoachStatus } from '../../stores/status';
@@ -289,6 +290,14 @@
 				</div>
 			</section>
 
+			<!-- Settings. Previously a tab in the upstream left sidebar, but
+			     that fought chat history for vertical space. Embedded here
+			     it sits alongside activity on the right, hidden behind a
+			     disclosure so the rail stays scannable. -->
+			<section class="settings">
+				<CoachPanel embedded={true} />
+			</section>
+
 			<nav class="scope">
 				<button
 					type="button"
@@ -504,6 +513,13 @@
 		border-color: rgb(55 65 81);
 	}
 
+	.settings {
+		padding: 4px 10px 8px;
+		border-bottom: 1px solid rgb(229 231 235);
+	}
+	:global(.dark) .settings {
+		border-bottom-color: rgb(31 41 55);
+	}
 	.events {
 		flex: 1;
 		min-height: 0;

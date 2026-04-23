@@ -39,10 +39,12 @@ check "+layout.svelte init import" \
   "src/routes/+layout.svelte" \
   '$lib/coach/init' 1
 
-# Site 3 — sidebar CoachPanel (import + tag)
-check "Sidebar.svelte CoachPanel" \
+# Site 3 — sidebar (marker only: panel moved to RailPanel).
+# Two [coach] comments mark the old import/mount spots so a future
+# upstream reshuffle doesn't silently bury them.
+check "Sidebar.svelte [coach] markers" \
   "src/lib/components/layout/Sidebar.svelte" \
-  "CoachPanel" 2
+  "[coach]" 2
 
 # Site 4 — Chat.svelte post-stream hook + follow-up listener
 check "Chat.svelte coach:chat:finish" \

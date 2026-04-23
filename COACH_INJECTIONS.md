@@ -79,28 +79,33 @@ Grep anchor: `grep -nF "$lib/coach/init" src/routes/+layout.svelte` returns 1 li
 
 ---
 
-## Site 3 — `src/lib/components/layout/Sidebar.svelte` (sidebar UI)
+## Site 3 — `src/lib/components/layout/Sidebar.svelte` (marker only)
 
-**What**: render the `<CoachPanel />` section in the sidebar.
+**What**: nothing, structurally — but we keep a `[coach]` marker comment
+where the `<CoachPanel />` used to live, so a rebase that reformats the
+sidebar surfaces the spot and we don't silently lose track of it.
 
-**Anchor**: the sticky-bottom region of the sidebar (above `UserMenu`) where
-other user-level controls already live.
+Historically CoachPanel rendered in the sticky-bottom region above
+UserMenu. As of the rail-default switch (commit TBD: "Coach: rail is
+the default variant"), the panel moved to the right-side RailPanel
+because the upstream left sidebar was fighting chat history for
+vertical space.
 
 Change:
 ```svelte
 <script>
-  // existing imports ...
-  import CoachPanel from '$lib/coach/components/CoachPanel.svelte';  // [coach]
+  // [coach] CoachPanel moved to RailPanel — import removed, see
+  //        src/lib/coach/ui/rail/RailPanel.svelte.
 </script>
 
 <!-- ... existing sidebar body ... -->
 <div class="sticky bottom-0 ...">
-  <CoachPanel />  <!-- [coach] -->
+  <!-- [coach] CoachPanel relocated to RailPanel.svelte -->
   <UserMenu ... />
 </div>
 ```
 
-Grep anchor: `grep -nF "CoachPanel" src/lib/components/layout/Sidebar.svelte` returns 2 lines.
+Grep anchor: `grep -nF "[coach]" src/lib/components/layout/Sidebar.svelte` — at least 2 lines (the two `[coach]` markers above).
 
 ---
 

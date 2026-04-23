@@ -12,7 +12,10 @@ import { writable } from 'svelte/store';
 
 export const COACH_UI_VARIANTS = ['chips', 'rail', 'theater'] as const;
 export type CoachUIVariant = (typeof COACH_UI_VARIANTS)[number];
-export const DEFAULT_COACH_UI_VARIANT: CoachUIVariant = 'chips';
+// Default: 'rail'. The right-side panel holds settings + activity and
+// doesn't fight the upstream left sidebar's chat history for space.
+// Users who prefer lighter chrome can switch back via the settings panel.
+export const DEFAULT_COACH_UI_VARIANT: CoachUIVariant = 'rail';
 
 const STORAGE_KEY = 'coach_ui_variant';
 
