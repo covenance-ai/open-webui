@@ -17,6 +17,7 @@
 		CoachPolicy
 	} from '../types';
 
+	import CoachAccessAdmin from './CoachAccessAdmin.svelte';
 	import CoachInspector from './CoachInspector.svelte';
 	import CoachPlayground from './CoachPlayground.svelte';
 	import PolicyEditor from './PolicyEditor.svelte';
@@ -54,11 +55,19 @@
 	}
 
 	$: enabled = $coachConfig?.enabled ?? false;
+	// Default true so a missing field (e.g. very-fresh login before
+	// /config has resolved) doesn't lock the user out of their own panel.
+	$: accessEnabled = $coachConfig?.access_enabled ?? true;
 	$: demoMode = $coachConfig?.demo_mode ?? false;
 	$: coachModelId = $coachConfig?.coach_model_id ?? '';
 	$: activeIds = $coachConfig?.active_policy_ids ?? [];
 	$: isAdmin = ($user as { role?: string } | null)?.role === 'admin';
+	$: selfUserId = ($user as { id?: string } | null)?.id ?? null;
 	$: token = typeof localStorage !== 'undefined' ? (localStorage.token ?? '') : '';
+
+	// Admin user-access subsection: collapse state, separate from the
+	// outer coach panel disclosure so admins can keep it shut by default.
+	let accessAdminOpen = false;
 
 	// ─── Config mutations ─────────────────────────────────────────────
 	async function saveConfig(patch: CoachConfigForm) {
@@ -233,11 +242,31 @@
 				>· {activeIds.length} active</span>
 			{/if}
 		</button>
-		<Switch state={enabled} on:change={onToggleEnabled} tooltip={enabled ? 'On' : 'Off'} />
+		<!-- Wrap so we can lock the switch when admin has disabled access.
+		     Switch.svelte (upstream) has no `disabled` prop; pointer-events
+		     + opacity is the lightest-touch way that doesn't fork it. -->
+		<div
+			class={accessEnabled ? '' : 'pointer-events-none opacity-50'}
+			title={!accessEnabled ? 'Coach disabled by admin' : ''}
+		>
+			<Switch state={enabled} on:change={onToggleEnabled} tooltip={enabled ? 'On' : 'Off'} />
+		</div>
 	</div>
 
 	{#if expanded}
 		<div class="px-1 pb-2 flex flex-col gap-2 text-xs">
+			{#if !accessEnabled}
+				<!-- Admin gate: short non-blocking banner. The toggles below are
+				     disabled too, but we surface a sentence so the user knows
+				     why. Admins can override by flipping their own row in the
+				     access-admin section further down. -->
+				<div
+					class="rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 px-2 py-1.5 text-[11px] text-amber-800 dark:text-amber-200"
+				>
+					Coach access is disabled for your account by an administrator.
+				</div>
+			{/if}
+
 			<!-- Demo mode row -->
 			<div class="flex items-center justify-between">
 				<div class="flex flex-col">
@@ -246,7 +275,15 @@
 						Scripted verdicts; keywords: demo:flag, demo:followup, demo:critical, demo:none
 					</span>
 				</div>
-				<Switch state={demoMode} on:change={onToggleDemoMode} tooltip={demoMode ? 'Demo' : 'Live'} />
+				<div
+					class={accessEnabled ? '' : 'pointer-events-none opacity-50'}
+				>
+					<Switch
+						state={demoMode}
+						on:change={onToggleDemoMode}
+						tooltip={demoMode ? 'Demo' : 'Live'}
+					/>
+				</div>
 			</div>
 
 			<!-- Model picker -->
@@ -343,6 +380,28 @@
 			>
 				▶ Playground (dry-run)
 			</button>
+
+			<!-- Admin: per-user access control. Renders only for admins;
+			     CoachAccessAdmin lazy-loads the user list on its own mount,
+			     so the cost is paid only when the section is opened. -->
+			{#if isAdmin}
+				<div class="mt-1 border-t border-gray-200 dark:border-gray-800 pt-2">
+					<button
+						type="button"
+						class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 mb-1"
+						on:click={() => (accessAdminOpen = !accessAdminOpen)}
+						aria-expanded={accessAdminOpen}
+					>
+						<span class="transition-transform inline-block {accessAdminOpen ? 'rotate-90' : ''}">▸</span>
+						<span>Admin · user access</span>
+					</button>
+					{#if accessAdminOpen}
+						{#key accessAdminOpen}
+							<CoachAccessAdmin {token} {selfUserId} />
+						{/key}
+					{/if}
+				</div>
+			{/if}
 
 			<!-- Activity log: per-user in-memory ring from /api/v1/coach/events.
 			     Hidden when embedded in the rail — the rail renders its own

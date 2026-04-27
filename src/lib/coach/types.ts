@@ -4,6 +4,11 @@
 export interface CoachConfig {
 	user_id: string;
 	enabled: boolean;
+	// Admin-controlled gate. When false, the coach short-circuits in
+	// run_core regardless of `enabled`; UI reflects this by disabling
+	// the user-facing toggle and showing a banner. Read-only on POST
+	// /config — see CoachConfigForm — admins set it via /admin/users.
+	access_enabled: boolean;
 	demo_mode: boolean;
 	coach_model_id: string | null;
 	active_policy_ids: string[];
@@ -103,6 +108,15 @@ export interface CoachEventDetail {
 	verdict: Record<string, unknown>;
 	active_policies: CoachPolicySnapshot[];
 	conversation: CoachConversationTurn[];
+}
+
+// ── Admin: per-user access control ──────────────────────────────────
+export interface CoachAdminUserAccessRow {
+	user_id: string;
+	name: string;
+	email: string;
+	role: string;
+	access_enabled: boolean;
 }
 
 export interface DryRunRequest {

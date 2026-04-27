@@ -30,8 +30,13 @@ Two new tables (alembic migrations `c0ac40c0f1c0` and `c0ac40c0f1c1`):
 - `coach_policy` — a natural-language rule. `user_id=NULL, is_shared=true`
   means admin-published (visible to everyone); otherwise it's personal to one
   user.
-- `coach_config` — one row per user: `enabled`, `coach_model_id`,
-  `active_policy_ids` (a JSON list of policy ids the user has switched on).
+- `coach_config` — one row per user: `enabled`, `access_enabled`,
+  `coach_model_id`, `active_policy_ids` (a JSON list of policy ids the
+  user has switched on). `access_enabled` is the **admin gate** — when
+  false, `service.run_core` short-circuits with `skip_reason='no_access'`
+  regardless of the user's own `enabled`. Default true. Admins toggle it
+  via `PATCH /api/v1/coach/admin/users/{user_id}` (UI lives inside the
+  CoachPanel under "Admin · user access").
 
 Note: migration `c0ac40c0f1c0` doubles as a **merge** of upstream's two
 alembic heads (`018012973d35` + `b2c3d4e5f6a7`). After this point the

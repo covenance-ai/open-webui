@@ -8,6 +8,10 @@ from pydantic import BaseModel, ConfigDict, Field
 class CoachConfigResponse(BaseModel):
     user_id: str
     enabled: bool
+    # Admin-controlled. Surfaced so the frontend can disable controls and
+    # show a "disabled by admin" banner. Users cannot self-edit this via
+    # POST /config — see CoachConfigForm.
+    access_enabled: bool = True
     demo_mode: bool = False
     coach_model_id: Optional[str] = None
     active_policy_ids: list[str]
@@ -18,12 +22,36 @@ class CoachConfigResponse(BaseModel):
 
 
 class CoachConfigForm(BaseModel):
-    """Partial update. Only non-None fields are applied."""
+    """Partial update. Only non-None fields are applied.
+
+    ``access_enabled`` is intentionally absent — it is admin-only, set via
+    the /admin/users endpoints.
+    """
 
     enabled: Optional[bool] = None
     demo_mode: Optional[bool] = None
     coach_model_id: Optional[str] = None
     active_policy_ids: Optional[list[str]] = None
+
+
+# ─── Admin: per-user access control ────────────────────────────────────
+
+
+class CoachAdminUserAccessRow(BaseModel):
+    """One row of GET /admin/users — the user identity + their coach
+    access state. ``access_enabled`` defaults to True for users who have
+    never opened the coach panel (no coach_config row yet) since the
+    column default is True."""
+
+    user_id: str
+    name: str
+    email: str
+    role: str
+    access_enabled: bool
+
+
+class CoachAdminUserAccessForm(BaseModel):
+    access_enabled: bool
 
 
 class CoachPolicyResponse(BaseModel):

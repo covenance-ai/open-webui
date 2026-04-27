@@ -21,6 +21,7 @@ import CoachStatusIndicator from './CoachStatusIndicator.svelte';
 const SAMPLE_CFG = {
 	user_id: 'u1',
 	enabled: true,
+	access_enabled: true,
 	demo_mode: false,
 	coach_model_id: 'm',
 	active_policy_ids: ['p1'],

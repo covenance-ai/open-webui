@@ -16,6 +16,11 @@ class CoachConfig(Base):
 
     user_id = Column(Text, primary_key=True)
     enabled = Column(Boolean, nullable=False, default=False)
+    # Admin-controlled gate. When false, the coach short-circuits in
+    # service.run_core regardless of the user's own ``enabled`` flag and
+    # the frontend disables the user-facing toggles. Default true so a
+    # newly-promoted user gets coach access until an admin says otherwise.
+    access_enabled = Column(Boolean, nullable=False, default=True)
     demo_mode = Column(Boolean, nullable=False, default=False)
     coach_model_id = Column(Text, nullable=True)
     active_policy_ids = Column(JSON, nullable=False, default=list)

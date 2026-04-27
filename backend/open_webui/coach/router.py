@@ -10,6 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from open_webui.coach import events as coach_events
 from open_webui.coach import service as coach_service
 from open_webui.coach.schemas import (
+    CoachAdminUserAccessForm,
+    CoachAdminUserAccessRow,
     CoachConfigForm,
     CoachConfigResponse,
     CoachEventDetailResponse,
@@ -22,7 +24,9 @@ from open_webui.coach.schemas import (
     EvaluateResponse,
 )
 from open_webui.coach.storage import CoachConfigs, CoachPolicies
+from open_webui.internal.db import get_db
 from open_webui.models.chats import Chats
+from open_webui.models.users import User
 from open_webui.utils.auth import get_admin_user, get_verified_user
 
 log = logging.getLogger(__name__)
@@ -507,4 +511,70 @@ async def dry_run(
         verdict=trace.verdict_dict,
         active_policies=trace.active_policies,
         conversation=trace.conversation,
+    )
+
+
+# ─── Admin: per-user access control ────────────────────────────────────
+
+
+@router.get('/admin/users', response_model=list[CoachAdminUserAccessRow])
+async def admin_list_user_access(
+    _admin=Depends(get_admin_user),
+) -> list[CoachAdminUserAccessRow]:
+    """Admin-only: list all users with their coach access state.
+
+    Joined directly off the User table so a user who has never opened
+    the coach panel still appears (with the column default ``True``).
+    Pending users are included so an admin can pre-deny access before
+    promoting them.
+    """
+    with get_db() as db:
+        users = (
+            db.query(User.id, User.name, User.email, User.role)
+            .order_by(User.email.asc())
+            .all()
+        )
+    user_ids = [u.id for u in users]
+    access_map = CoachConfigs.get_access_map(user_ids)
+    return [
+        CoachAdminUserAccessRow(
+            user_id=u.id,
+            name=u.name or '',
+            email=u.email or '',
+            role=u.role or 'pending',
+            access_enabled=access_map.get(u.id, True),
+        )
+        for u in users
+    ]
+
+
+@router.patch('/admin/users/{user_id}', response_model=CoachAdminUserAccessRow)
+async def admin_set_user_access(
+    user_id: str,
+    form: CoachAdminUserAccessForm,
+    _admin=Depends(get_admin_user),
+) -> CoachAdminUserAccessRow:
+    """Admin-only: toggle ``access_enabled`` for one user.
+
+    Returns the same row shape as the list endpoint so the caller can
+    splice the response back into its table without an extra fetch.
+    """
+    with get_db() as db:
+        user = db.query(User).filter_by(id=user_id).first()
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail='User not found.',
+            )
+        name = user.name or ''
+        email = user.email or ''
+        role = user.role or 'pending'
+
+    cfg = CoachConfigs.set_access(user_id, form.access_enabled)
+    return CoachAdminUserAccessRow(
+        user_id=user_id,
+        name=name,
+        email=email,
+        role=role,
+        access_enabled=cfg.access_enabled,
     )

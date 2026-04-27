@@ -3,6 +3,7 @@
 
 import { WEBUI_API_BASE_URL } from '$lib/constants';
 import type {
+	CoachAdminUserAccessRow,
 	CoachConfig,
 	CoachConfigForm,
 	CoachEvent,
@@ -108,3 +109,26 @@ export const dryRunCoach = (token: string, body: DryRunRequest) =>
 		headers: authHeaders(token),
 		body: JSON.stringify(body)
 	});
+
+// Admin: per-user access control. Backend rejects with 403 unless the
+// caller has role=admin, so these are safe to call from the user-side
+// CoachPanel guarded only by the UI's `isAdmin` check.
+export const adminListCoachUserAccess = (token: string) =>
+	fetchJson<CoachAdminUserAccessRow[]>(`${BASE}/admin/users`, {
+		method: 'GET',
+		headers: authHeaders(token)
+	});
+
+export const adminSetCoachUserAccess = (
+	token: string,
+	userId: string,
+	accessEnabled: boolean
+) =>
+	fetchJson<CoachAdminUserAccessRow>(
+		`${BASE}/admin/users/${encodeURIComponent(userId)}`,
+		{
+			method: 'PATCH',
+			headers: authHeaders(token),
+			body: JSON.stringify({ access_enabled: accessEnabled })
+		}
+	);

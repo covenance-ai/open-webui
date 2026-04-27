@@ -105,6 +105,7 @@ class CoachConfigTable:
                 row = CoachConfig(
                     user_id=user_id,
                     enabled=False,
+                    access_enabled=True,
                     demo_mode=False,
                     coach_model_id=os.environ.get('COACH_DEFAULT_MODEL_ID') or None,
                     active_policy_ids=shared_ids,
@@ -130,6 +131,7 @@ class CoachConfigTable:
                 row = CoachConfig(
                     user_id=user_id,
                     enabled=form.enabled if form.enabled is not None else False,
+                    access_enabled=True,
                     demo_mode=form.demo_mode if form.demo_mode is not None else False,
                     coach_model_id=form.coach_model_id,
                     active_policy_ids=form.active_policy_ids or [],
@@ -150,6 +152,64 @@ class CoachConfigTable:
             db.commit()
             db.refresh(row)
             return CoachConfigResponse.model_validate(row)
+
+
+    def set_access(
+        self,
+        user_id: str,
+        access_enabled: bool,
+        db: Optional[Session] = None,
+    ) -> CoachConfigResponse:
+        """Admin-only mutation: set ``access_enabled`` for one user.
+
+        Creates the row if absent so an admin can deny access to a user
+        who has never opened the coach panel. We seed with sane defaults
+        (the user can later opt in / pick a model / activate policies)
+        but do NOT pre-attach shared policies — denying a user who never
+        engaged should not implicitly create a fully-configured row.
+        """
+        with get_db_context(db) as db:
+            row = db.query(CoachConfig).filter_by(user_id=user_id).first()
+            now = int(time.time())
+            if row is None:
+                row = CoachConfig(
+                    user_id=user_id,
+                    enabled=False,
+                    access_enabled=access_enabled,
+                    demo_mode=False,
+                    coach_model_id=os.environ.get('COACH_DEFAULT_MODEL_ID') or None,
+                    active_policy_ids=[],
+                    created_at=now,
+                    updated_at=now,
+                )
+                db.add(row)
+            else:
+                row.access_enabled = access_enabled
+                row.updated_at = now
+            db.commit()
+            db.refresh(row)
+            return CoachConfigResponse.model_validate(row)
+
+    def get_access_map(
+        self, user_ids: list[str], db: Optional[Session] = None
+    ) -> dict[str, bool]:
+        """Return ``{user_id: access_enabled}`` for the given user_ids.
+
+        Users without a coach_config row default to True (the column
+        default), matching the behaviour of get_or_default — a user who
+        has never opened the panel is implicitly allowed until an admin
+        toggles them off.
+        """
+        if not user_ids:
+            return {}
+        with get_db_context(db) as db:
+            rows = (
+                db.query(CoachConfig.user_id, CoachConfig.access_enabled)
+                .filter(CoachConfig.user_id.in_(user_ids))
+                .all()
+            )
+            existing = {uid: bool(flag) for uid, flag in rows}
+            return {uid: existing.get(uid, True) for uid in user_ids}
 
 
 CoachConfigs = CoachConfigTable()

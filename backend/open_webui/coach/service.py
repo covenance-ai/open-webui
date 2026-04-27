@@ -328,6 +328,7 @@ async def run_core(
     llm_caller,
     event_sink: Optional[EventSink] = None,
     phase: str = 'post',
+    access_enabled: bool = True,
 ) -> EvaluateResponse:
     """Evaluate with fully-resolved inputs; no DB reads.
 
@@ -352,6 +353,12 @@ async def run_core(
 
     if not conversation:
         trace.skip_reason = 'empty_conversation'
+        return emit(_noop())
+
+    # Admin gate. Checked before the user's own ``enabled`` so admins can
+    # deny access to users who have already turned the coach on themselves.
+    if not access_enabled:
+        trace.skip_reason = 'no_access'
         return emit(_noop())
 
     if not enabled:
@@ -446,6 +453,7 @@ async def evaluate(
     return await run_core(
         user_id=user_id,
         enabled=cfg.enabled,
+        access_enabled=getattr(cfg, 'access_enabled', True),
         demo_mode=cfg.demo_mode,
         coach_model_id=cfg.coach_model_id,
         policies=policies,

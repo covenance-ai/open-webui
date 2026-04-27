@@ -173,6 +173,83 @@ def test_evaluate_disabled_returns_none():
     assert r.action == 'none'
 
 
+def test_evaluate_admin_access_disabled_blocks_even_when_user_enabled():
+    """Admin gate (access_enabled=False) takes precedence over user's own enabled.
+
+    Otherwise an admin couldn't actually deny access to a user who had
+    already turned the coach on themselves.
+    """
+    from open_webui.coach.schemas import ConversationTurn
+    from open_webui.coach.service import evaluate
+    from open_webui.coach.storage import CoachConfigs
+
+    _enable_coach_with_policy()  # user u1 has enabled=True + a policy
+    CoachConfigs.set_access('u1', access_enabled=False)
+
+    async def caller(_m, _msgs):
+        raise AssertionError('LLM must not be called when access is denied')
+
+    r = _run(evaluate(
+        user_id='u1', user_role='user',
+        conversation=[
+            ConversationTurn(role='user', content='hi'),
+            ConversationTurn(role='assistant', content='reply'),
+        ],
+        llm_caller=caller,
+    ))
+    assert r.action == 'none'
+
+
+def test_evaluate_admin_access_reenable_restores_flow():
+    """Toggling access back on must restore normal evaluation."""
+    from open_webui.coach.schemas import ConversationTurn
+    from open_webui.coach.service import evaluate
+    from open_webui.coach.storage import CoachConfigs
+
+    p = _enable_coach_with_policy()
+    CoachConfigs.set_access('u1', access_enabled=False)
+    CoachConfigs.set_access('u1', access_enabled=True)
+
+    async def caller(_m, _msgs):
+        return f'{{"action":"flag","rationale":"violation","policy_id":"{p.id}","severity":"warn"}}'
+
+    r = _run(evaluate(
+        user_id='u1', user_role='user',
+        conversation=[
+            ConversationTurn(role='user', content='hi'),
+            ConversationTurn(role='assistant', content='reply'),
+        ],
+        llm_caller=caller,
+    ))
+    assert r.action == 'flag'
+
+
+def test_set_access_creates_row_for_unseen_user():
+    """An admin must be able to deny access to a user who has never opened
+    the panel — set_access creates the row in that case."""
+    from open_webui.coach.storage import CoachConfigs
+
+    cfg = CoachConfigs.set_access('never-seen-user', access_enabled=False)
+    assert cfg.user_id == 'never-seen-user'
+    assert cfg.access_enabled is False
+    assert cfg.enabled is False  # default off
+
+    # And it survives a re-read.
+    again = CoachConfigs.get_or_default('never-seen-user')
+    assert again.access_enabled is False
+
+
+def test_get_access_map_defaults_unseen_users_to_true():
+    """Property: an unseen user_id resolves to True (column default), not
+    a missing key — admins listing all users always get a per-row state."""
+    from open_webui.coach.storage import CoachConfigs
+
+    CoachConfigs.set_access('seen-off', access_enabled=False)
+    CoachConfigs.set_access('seen-on', access_enabled=True)
+    m = CoachConfigs.get_access_map(['seen-off', 'seen-on', 'never-seen'])
+    assert m == {'seen-off': False, 'seen-on': True, 'never-seen': True}
+
+
 def test_evaluate_flag_path():
     from open_webui.coach.schemas import ConversationTurn
     from open_webui.coach.service import evaluate
