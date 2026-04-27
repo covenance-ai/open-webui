@@ -39,6 +39,7 @@ from open_webui.utils.access_control import has_permission, filter_allowed_acces
 from open_webui.config import BYPASS_ADMIN_ACCESS_CONTROL
 from open_webui.internal.db import get_async_session
 from sqlalchemy.ext.asyncio import AsyncSession
+from open_webui.coach.model_logos import default_logo_url  # [coach]
 
 log = logging.getLogger(__name__)
 
@@ -497,6 +498,13 @@ async def get_model_profile_image(
                         url=safe_static,
                         status_code=status.HTTP_302_FOUND,
                     )
+
+    # [coach] No DB-supplied image — try regex on the model id to pick the
+    # provider logo (claude/openai/gemini/...). Lets a model added via
+    # Connections show a real logo without a deploy.sh overlay step.
+    auto_url = default_logo_url(id)
+    if auto_url:
+        return RedirectResponse(url=auto_url, status_code=status.HTTP_302_FOUND)
 
     return RedirectResponse(
         url='/static/favicon.png',

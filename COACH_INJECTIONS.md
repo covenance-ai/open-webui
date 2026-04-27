@@ -271,6 +271,35 @@ Grep anchor: `grep -nF "seed_openai_api_configs" backend/open_webui/main.py` ret
 
 ---
 
+## Site 8 — `backend/open_webui/routers/models.py` (auto-logo fallback)
+
+**What**: when `/models/model/profile/image?id=<id>` finds no DB-supplied
+`profile_image_url`, run a regex on the model id (see
+`coach/model_logos.py`) and 302 to the matching provider logo on the
+lobe-icons CDN. Falls through to the upstream favicon redirect when no
+rule matches. This removes the need to register a per-model logo overlay
+via `deploy.sh` — admins can add a model in Connections and its logo
+appears immediately if the regex recognises it.
+
+**Anchor**: the existing `RedirectResponse(url='/static/favicon.png', ...)`
+fallback at the end of `get_model_profile_image`.
+
+Change:
+```python
+# (imports near the bottom of the existing block)
+from open_webui.coach.model_logos import default_logo_url  # [coach]
+
+# (just before the favicon fallback)
+auto_url = default_logo_url(id)  # [coach]
+if auto_url:                     # [coach]
+    return RedirectResponse(url=auto_url, status_code=status.HTTP_302_FOUND)
+return RedirectResponse(url='/static/favicon.png', status_code=status.HTTP_302_FOUND)
+```
+
+Grep anchor: `grep -nF "default_logo_url" backend/open_webui/routers/models.py` returns 2 lines.
+
+---
+
 ## Site 6 — `our_webui/deploy.sh` (build our fork)
 
 **What**: replace the ghcr.io proxy with an Artifact Registry repo we own,

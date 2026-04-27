@@ -81,6 +81,11 @@ check "main.py seed_openai_api_configs" \
   "backend/open_webui/main.py" \
   "seed_openai_api_configs" 2
 
+# Site 8 — models.py auto-logo fallback (import + call site)
+check "models.py default_logo_url" \
+  "backend/open_webui/routers/models.py" \
+  "default_logo_url" 2
+
 echo
 if [[ "$fail" -eq 0 ]]; then
   echo "All Coach anchors present."
