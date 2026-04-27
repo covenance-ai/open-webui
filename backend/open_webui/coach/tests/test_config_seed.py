@@ -46,22 +46,26 @@ def test_build_seed_maps_positions_by_url():
     ]
     out = _build_seed(urls)
     assert set(out) == {'0', '1', '2', '3', '4'}
-    assert out['0']['enable'] is True and 'gpt-5.4' in out['0']['model_ids']
+    assert out['0']['enable'] is True
+    # Pin-agnostic: just assert the OpenAI slot has gpt-style models, so this
+    # test survives version bumps applied by scripts/update_models.py.
+    assert any(mid.startswith('gpt-') for mid in out['0']['model_ids'])
     assert out['1'] == {'enable': False}
     assert out['4'] == {'enable': False}
 
 
 def test_build_seed_subset_and_reorder():
     # Only OpenAI configured → only index 0 seeded.
-    assert _build_seed(['https://api.openai.com/v1']) == {
-        '0': DEFAULT_OPENAI_API_CONFIGS_BY_URL['https://api.openai.com/v1']
-    } or _build_seed(['https://api.openai.com/v1'])['0']['model_ids'] == \
+    out_openai_only = _build_seed(['https://api.openai.com/v1'])
+    assert set(out_openai_only) == {'0'}
+    assert out_openai_only['0']['model_ids'] == \
         DEFAULT_OPENAI_API_CONFIGS_BY_URL['https://api.openai.com/v1']['model_ids']
 
-    # Reordered: OpenRouter at index 0 now.
+    # Reordered: OpenRouter at index 0 now. Assert provider identity by prefix
+    # (pin-agnostic — survives version bumps by scripts/update_models.py).
     out = _build_seed(['https://openrouter.ai/api/v1', 'https://api.openai.com/v1'])
-    assert 'anthropic/claude-opus-4.6' in out['0']['model_ids']
-    assert 'gpt-5.4' in out['1']['model_ids']
+    assert any(mid.startswith('anthropic/') for mid in out['0']['model_ids'])
+    assert any(mid.startswith('gpt-') for mid in out['1']['model_ids'])
 
 
 def test_build_seed_unknown_url_skipped():
