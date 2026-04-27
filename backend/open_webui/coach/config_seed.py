@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 DEFAULT_OPENAI_API_CONFIGS_BY_URL: dict[str, dict[str, Any]] = {
     'https://api.openai.com/v1': {
         'enable': True,
-        'model_ids': ['gpt-5.4', 'gpt-5.4-mini'],
+        'model_ids': ['gpt-5.5', 'gpt-5.4-mini'],
     },
     'https://generativelanguage.googleapis.com/v1beta/openai': {
         'enable': True,
@@ -35,13 +35,13 @@ DEFAULT_OPENAI_API_CONFIGS_BY_URL: dict[str, dict[str, Any]] = {
     'https://openrouter.ai/api/v1': {
         'enable': True,
         'model_ids': [
-            'anthropic/claude-opus-4.6',
+            'anthropic/claude-opus-4.7',
             'anthropic/claude-sonnet-4.6',
             'deepseek/deepseek-v3.2',
             'deepseek/deepseek-r1-0528',
             'qwen/qwen3.6-plus',
             'qwen/qwen3-max-thinking',
-            'z-ai/glm-5',
+            'z-ai/glm-5.1',
             'z-ai/glm-4.7',
         ],
     },
