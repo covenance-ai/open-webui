@@ -134,6 +134,22 @@ def test_default_logo_url_format():
     assert url.endswith('/claude-color.svg')
 
 
+def test_favicon_default_is_treated_as_unset():
+    """ModelMeta has a pydantic default of ``/static/favicon.png`` for
+    profile_image_url, so almost every row we register via deploy.sh
+    arrives with that exact string in the DB. The regex fallback must
+    still fire in that case — otherwise the auto-logo never wins on the
+    curated allowlist.
+
+    This is a property of the *route*, but the regex must be ready to
+    serve a real URL for the same id; encode that side here.
+    """
+    # If the regex matches gpt-5.4, the route — once it normalises the
+    # favicon default to None — will reach this URL.
+    assert default_logo_url('gpt-5.4') is not None
+    assert default_logo_url('anthropic/claude-opus-4.6') is not None
+
+
 def test_openai_has_no_color_variant():
     """OpenAI's brand mark on lobe-icons is mono only — using `-color`
     would 404. Encode that invariant so a future refactor can't silently

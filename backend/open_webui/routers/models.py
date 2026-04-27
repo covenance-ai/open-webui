@@ -466,6 +466,12 @@ async def get_model_profile_image(
     if model_meta:
         meta, updated_at = model_meta
         profile_image_url = (meta or {}).get('profile_image_url')
+        # [coach] Treat the pydantic default ('/static/favicon.png') as "no
+        # real image" so the regex fallback below still fires. The default
+        # is injected by ModelMeta whenever an overlay omits the field, so
+        # most rows we register via deploy.sh end up with this exact value.
+        if profile_image_url == '/static/favicon.png':
+            profile_image_url = None
 
         if profile_image_url:
             if profile_image_url.startswith('http'):
