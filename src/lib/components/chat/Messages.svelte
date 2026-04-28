@@ -466,48 +466,40 @@
 						</Loader>
 					{/if}
 					<ul role="log" aria-live="polite" aria-relevant="additions" aria-atomic="false">
-						<!-- Top spacer: sum of cached heights for messages above visible range -->
-						{#if topSpacerHeight > 0}
-							<div style="height: {topSpacerHeight}px" aria-hidden="true" />
-						{/if}
-
-						{#each messages.slice(visibleStart, visibleEnd) as message, i (message.id)}
-							{@const messageIdx = visibleStart + i}
-							<li data-message-id={message.id} class="contents"> <!-- [coach] anchor for flag/badge overlays -->
-							<Message
-								{chatId}
-								bind:history
-								{selectedModels}
-								messageId={message.id}
-								idx={messageIdx}
-								{user}
-								{setInputText}
-								{gotoMessage}
-								{showPreviousMessage}
-								{showNextMessage}
-								{updateChat}
-								{editMessage}
-								{deleteMessage}
-								{rateMessage}
-								{actionMessage}
-								{saveMessage}
-								{submitMessage}
-								{regenerateResponse}
-								{continueResponse}
-								{mergeResponses}
-								{addMessages}
-								{triggerScroll}
-								{readOnly}
-								{editCodeBlock}
-								{topPadding}
-							/>
-							</li> <!-- [coach] -->
+						{#each messages as message, messageIdx (message.id)}
+							<!-- [coach] anchor for flag/badge overlays — coach init.ts looks up
+							     messages by [data-message-id]; the <li class="contents"> is purely
+							     structural so it doesn't disturb upstream layout. -->
+							<li data-message-id={message.id} class="contents">
+								<Message
+									{chatId}
+									bind:history
+									{selectedModels}
+									messageId={message.id}
+									idx={messageIdx}
+									{user}
+									{setInputText}
+									{gotoMessage}
+									{showPreviousMessage}
+									{showNextMessage}
+									{updateChat}
+									{editMessage}
+									{deleteMessage}
+									{rateMessage}
+									{actionMessage}
+									{saveMessage}
+									{submitMessage}
+									{regenerateResponse}
+									{continueResponse}
+									{mergeResponses}
+									{addMessages}
+									{triggerScroll}
+									{readOnly}
+									{editCodeBlock}
+									{topPadding}
+								/>
+							</li>
 						{/each}
-
-						<!-- Bottom spacer: sum of cached heights for messages below visible range -->
-						{#if bottomSpacerHeight > 0}
-							<div style="height: {bottomSpacerHeight}px" aria-hidden="true" />
-						{/if}
 					</ul>
 				</section>
 				<div class="pb-18" />
