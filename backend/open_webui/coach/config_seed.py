@@ -37,13 +37,11 @@ DEFAULT_OPENAI_API_CONFIGS_BY_URL: dict[str, dict[str, Any]] = {
         'model_ids': [
             'anthropic/claude-opus-4.7',
             'anthropic/claude-sonnet-4.6',
-            'deepseek/deepseek-v3.2',
             'deepseek/deepseek-v4-pro',
             'deepseek/deepseek-v4-flash',
             'qwen/qwen3.6-plus',
             'qwen/qwen3-max-thinking',
             'z-ai/glm-5.1',
-            'z-ai/glm-4.7',
         ],
     },
     # Connected by some installs (keys in .env), but intentionally hidden
