@@ -462,16 +462,25 @@ async function mountGlobalCoachSurfaces() {
 	}
 }
 
-// Wire up immediately (side-effect import time). bootstrap() kicks in as
-// soon as `user` becomes available.
+// wireEvaluator only registers a window event listener (no DOM); safe to
+// run before sign-in. Anything that mounts UI on document.body — variant
+// mounts (RailMount/etc.) and the always-on globals (CoachLight,
+// CoachBlockBanner) — must wait for `user` to be non-null, otherwise the
+// coach panel renders on the /auth screen. Sign-out triggers a full
+// page reload (location.href = '/auth' in +layout.svelte), so we don't
+// have to unmount on transition to null — the next page load starts
+// fresh with uiInitialized = false.
 wireEvaluator();
-subscribeVariant();
-void mountGlobalCoachSurfaces();
 
+let uiInitialized = false;
 user.subscribe((u) => {
-	if (u) {
-		void bootstrap();
+	if (!u) return;
+	if (!uiInitialized) {
+		uiInitialized = true;
+		subscribeVariant();
+		void mountGlobalCoachSurfaces();
 	}
+	void bootstrap();
 });
 
 // ── Pre-flight hook (exposed globally for Chat.svelte injection) ──
