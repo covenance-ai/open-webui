@@ -187,6 +187,7 @@ cd open-webui/backend
 source .venv/bin/activate
 DATABASE_URL=sqlite:///./coach-dev.db \
   WEBUI_SECRET_KEY=dev-local-secret \
+  OUR_WEBUI_DEV_AUTOSEED=1 \
   uvicorn open_webui.main:app --reload --port 8080
 
 # terminal 2 — frontend (Vite on :5173)
@@ -194,8 +195,20 @@ cd open-webui
 npm run dev
 ```
 
-Open http://localhost:5173. Sign up (first user becomes admin). Then run
-the canonical-scenarios suite in a third terminal:
+Open http://localhost:5173. With `OUR_WEBUI_DEV_AUTOSEED=1` two accounts
+are seeded on every boot (idempotent — existing users are never
+overwritten):
+
+| Email             | Password | Role  |
+|-------------------|----------|-------|
+| `admin@local.dev` | `admin`  | admin |
+| `user@local.dev`  | `user`   | user  |
+
+Drop the env var (or set it to `0`) and signup-flow remains: first user
+becomes admin. Safety: the seeder refuses to run unless `DATABASE_URL`
+points at SQLite, so an env-flag mistake on Cloud Run can't mutate prod.
+
+Then run the canonical-scenarios suite in a third terminal:
 
 ```bash
 cd open-webui/backend

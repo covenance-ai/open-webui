@@ -109,6 +109,7 @@ from open_webui.routers import (
 )
 from open_webui.coach.router import router as coach_router  # [coach]
 from open_webui.coach.config_seed import seed_openai_api_configs  # [coach]
+from open_webui.coach.dev_seed import seed_dev_users  # [coach]
 
 from open_webui.routers.retrieval import (
     get_embedding_function,
@@ -815,6 +816,7 @@ app.state.config.OPENAI_API_BASE_URLS = OPENAI_API_BASE_URLS
 app.state.config.OPENAI_API_KEYS = OPENAI_API_KEYS
 app.state.config.OPENAI_API_CONFIGS = OPENAI_API_CONFIGS
 seed_openai_api_configs(app)  # [coach]
+seed_dev_users()  # [coach] — guarded by OUR_WEBUI_DEV_AUTOSEED env + sqlite check
 
 app.state.OPENAI_MODELS = {}
 
