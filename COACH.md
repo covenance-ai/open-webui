@@ -185,9 +185,15 @@ Two terminals, no Docker, SQLite DB so nothing is shared with prod:
 # terminal 1 — backend (FastAPI on :8080)
 cd open-webui/backend
 source .venv/bin/activate
+# Source the workspace .env so OPENAI_API_BASE_URLS / OPENAI_API_KEYS line
+# up — without this only the default OpenAI connection is configured and
+# config_seed has nothing to seed for OpenRouter / Google / etc., so the
+# model picker shows GPT models only.
+set -a; source ../../.env; set +a
 DATABASE_URL=sqlite:///./coach-dev.db \
   WEBUI_SECRET_KEY=dev-local-secret \
   OUR_WEBUI_DEV_AUTOSEED=1 \
+  ENABLE_PERSISTENT_CONFIG=False \
   uvicorn open_webui.main:app --reload --port 8080
 
 # terminal 2 — frontend (Vite on :5173)
