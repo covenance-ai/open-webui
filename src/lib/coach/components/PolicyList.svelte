@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import { KIND_META } from '../kindMeta';
 	import type { CoachPolicy } from '../types';
 
 	export let policies: CoachPolicy[] = [];
@@ -8,6 +9,9 @@
 	export let editable = false; // personal policies: show edit/delete
 	export let shareable = false; // admin only: show share-this-one
 	export let disabled = false;
+	// Hide the kind chip — useful when the parent already groups by kind
+	// and the chip is redundant (e.g. /coach page sections).
+	export let showKind = true;
 
 	const dispatch = createEventDispatcher<{
 		toggleActive: string;
@@ -34,6 +38,18 @@
 				on:change={() => dispatch('toggleActive', p.id)}
 				class="size-3.5 cursor-pointer"
 			/>
+
+			{#if showKind}
+				{@const meta = KIND_META[p.kind ?? 'flag']}
+				<Tooltip content={meta.tagline} placement="top">
+					<span
+						class="text-[10px] px-1.5 py-0.5 rounded-md font-medium select-none {meta.chipBg} {meta.chipFg}"
+						aria-label="kind: {meta.label}"
+					>
+						{meta.icon} {meta.label}
+					</span>
+				</Tooltip>
+			{/if}
 
 			<Tooltip content={p.body} placement="right">
 				<span class="text-sm flex-1 truncate select-none">

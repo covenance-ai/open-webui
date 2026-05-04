@@ -6,14 +6,14 @@
 
 	import { createEventDispatcher } from 'svelte';
 	import Modal from '$lib/components/common/Modal.svelte';
-	import type { CoachPolicy } from '../types';
+	import type { CoachPolicy, PolicyKind } from '../types';
 	import PolicyEditorForm from './PolicyEditorForm.svelte';
 
 	export let show = false;
 	export let policy: CoachPolicy | null = null;
 
 	const dispatch = createEventDispatcher<{
-		save: { id: string | null; title: string; body: string };
+		save: { id: string | null; title: string; body: string; kind: PolicyKind };
 		close: void;
 	}>();
 </script>

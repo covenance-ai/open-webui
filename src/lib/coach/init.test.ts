@@ -20,12 +20,13 @@ import {
 	type PreflightBlockDetail
 } from './init';
 
-const HIRING_POLICY = {
+const HIRING_POLICY: import('./types').CoachPolicy = {
 	id: 'pol-hiring',
 	user_id: null,
 	is_shared: true,
 	title: 'No LLM for hiring decisions',
 	body: 'No hiring use. EU AI Act Annex III: high-risk.',
+	kind: 'block',
 	created_at: 0,
 	updated_at: 0
 };

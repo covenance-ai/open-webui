@@ -169,16 +169,21 @@
 	}
 
 	async function onEditorSave(
-		e: CustomEvent<{ id: string | null; title: string; body: string }>
+		e: CustomEvent<{
+			id: string | null;
+			title: string;
+			body: string;
+			kind: CoachPolicy['kind'];
+		}>
 	) {
 		if (!token) return;
-		const { id, title, body } = e.detail;
+		const { id, title, body, kind } = e.detail;
 		try {
 			if (id) {
-				const updated = await api.updateCoachPolicy(token, id, { title, body });
+				const updated = await api.updateCoachPolicy(token, id, { title, body, kind });
 				coachPolicies.update((ps) => ps.map((p) => (p.id === updated.id ? updated : p)));
 			} else {
-				const created = await api.createCoachPolicy(token, { title, body });
+				const created = await api.createCoachPolicy(token, { title, body, kind });
 				coachPolicies.update((ps) => [created, ...ps]);
 			}
 			editorOpen = false;

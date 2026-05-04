@@ -23,12 +23,26 @@ export interface CoachConfigForm {
 	active_policy_ids?: string[];
 }
 
+// One of the 3 canonical coach use cases — a policy's kind decides
+// which action it produces when it fires:
+//   block      pre-flight gate; the user's message is refused before
+//              the LLM sees it. For hard topic bans.
+//   flag       post-flight warning; LLM replies, the message is
+//              annotated. For soft concerns the user can address.
+//   intervene  post-flight self-correction; coach sends a follow-up
+//              prompt asking the LLM to fix its reply.
+//
+// Mirrors backend/open_webui/coach/schemas.py:VALID_POLICY_KINDS.
+export const POLICY_KINDS = ['block', 'flag', 'intervene'] as const;
+export type PolicyKind = (typeof POLICY_KINDS)[number];
+
 export interface CoachPolicy {
 	id: string;
 	user_id: string | null;
 	is_shared: boolean;
 	title: string;
 	body: string;
+	kind: PolicyKind;
 	// Optional hyperlink shown in the block banner — "read full
 	// explanation" link. Wikipedia / regulation / internal wiki / etc.
 	explanation_url?: string | null;
@@ -39,12 +53,14 @@ export interface CoachPolicy {
 export interface CoachPolicyCreateForm {
 	title: string;
 	body: string;
+	kind: PolicyKind;
 	explanation_url?: string | null;
 }
 
 export interface CoachPolicyUpdateForm {
 	title?: string;
 	body?: string;
+	kind?: PolicyKind;
 	explanation_url?: string | null;
 }
 
@@ -76,6 +92,7 @@ export interface CoachPolicySnapshot {
 	id: string;
 	title: string;
 	body: string;
+	kind: PolicyKind;
 	is_shared: boolean;
 }
 
