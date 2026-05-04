@@ -26,7 +26,7 @@
 		setCoachForChat
 	} from '../stores/perChat';
 	import { coachStatusByChat, type CoachStatus } from '../stores/status';
-	import { coachUIVariant } from '../stores/ui';
+	import { COACH_UI_VARIANTS, coachUIVariant, type CoachUIVariant } from '../stores/ui';
 
 	// Hide when the rail variant is active — the rail already shows
 	// live status, toggles live in its embedded settings panel, and
@@ -223,9 +223,12 @@
 		};
 	});
 
-	function openFullPanel() {
-		window.dispatchEvent(new CustomEvent('coach:open-panel'));
-		closeMenu();
+	function onVariantChange(e: Event) {
+		const v = (e.currentTarget as HTMLSelectElement).value as CoachUIVariant;
+		coachUIVariant.set(v);
+		// Don't auto-close: switching to 'rail' unmounts this light, which
+		// is already a clear signal. Switching to chips/theater keeps the
+		// menu open so the user can verify the choice took.
 	}
 </script>
 
@@ -268,9 +271,19 @@
 				</button>
 			</div>
 
-			<button type="button" class="menu-link" on:click={openFullPanel}>
-				Open full settings →
-			</button>
+			<div class="menu-row variant-row">
+				<span class="menu-label">Display</span>
+				<select
+					class="variant-select"
+					value={$coachUIVariant}
+					on:change={onVariantChange}
+					aria-label="Coach display mode"
+				>
+					{#each COACH_UI_VARIANTS as v}
+						<option value={v}>{v}</option>
+					{/each}
+				</select>
+			</div>
 		</div>
 	{/if}
 
@@ -411,26 +424,27 @@
 	.reset:hover {
 		opacity: 1;
 	}
-	.menu-link {
-		display: block;
-		width: 100%;
-		text-align: left;
-		padding: 0.5rem 0.625rem;
-		margin-top: 0.25rem;
+	.variant-row {
 		border-top: 1px solid rgba(0, 0, 0, 0.06);
-		background: none;
-		color: inherit;
-		font: inherit;
-		cursor: pointer;
+		margin-top: 0.25rem;
+		padding-top: 0.5rem;
 	}
-	:global(.dark) .menu-link {
+	:global(.dark) .variant-row {
 		border-top-color: rgba(255, 255, 255, 0.08);
 	}
-	.menu-link:hover {
-		background: rgba(0, 0, 0, 0.04);
+	.variant-select {
+		font: inherit;
+		font-size: 11.5px;
+		padding: 2px 6px;
+		border-radius: 6px;
+		border: 1px solid rgba(0, 0, 0, 0.12);
+		background: rgba(255, 255, 255, 0.9);
+		color: inherit;
+		cursor: pointer;
 	}
-	:global(.dark) .menu-link:hover {
-		background: rgba(255, 255, 255, 0.05);
+	:global(.dark) .variant-select {
+		background: rgba(255, 255, 255, 0.06);
+		border-color: rgba(255, 255, 255, 0.14);
 	}
 	.switch {
 		position: relative;
