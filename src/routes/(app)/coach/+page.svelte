@@ -78,24 +78,24 @@
 			{ role: 'system', text: 'post-flight (after the LLM replies)' },
 			{
 				role: 'user',
-				text: 'Summarise the article on dark patterns in UI design.'
+				text: 'When did Einstein win the Nobel Prize, and what for?'
 			},
 			{ role: 'assistant', variant: 'thinking', transient: true },
 			{
 				role: 'assistant',
 				text:
-					'Dark patterns are deceptive UI designs that trick users into ' +
-					'doing things they would not choose to do — sneak-into-basket, ' +
-					'forced continuity, confirmshaming, etc.'
+					'Einstein won the Nobel Prize in Physics in 1921 for his ' +
+					'theory of general relativity.'
 			},
 			{ role: 'coach', variant: 'reviewing', transient: true },
 			{
 				role: 'coach',
 				variant: 'flag',
-				policyTitle: 'Cite sources for factual claims',
+				policyTitle: 'Fact-check confident claims about people',
 				text:
-					'No source cited for the article being summarised. Reader ' +
-					"can't verify the summary against the original."
+					'Half wrong with confidence: Einstein won the 1921 Physics ' +
+					'Nobel for the photoelectric effect, not relativity. The ' +
+					'committee considered relativity too theoretical at the time.'
 			}
 		],
 		intervene: [
@@ -143,25 +143,16 @@
 	}
 
 	// ─── Editor state ─────────────────────────────────────────────────
+	// editorPolicy=null with editorOpen=true → creating new (uses
+	// editorDefaultKind to pre-select). Non-null policy → editing.
 	let editorOpen = false;
 	let editorPolicy: CoachPolicy | null = null;
+	let editorDefaultKind: PolicyKind = 'flag';
 	let saving = false;
 
-	function openCreate(kind: PolicyKind | null = null) {
-		// kind can be passed by the demo cards' "Author one" link to
-		// pre-select the kind in the new-policy form.
-		editorPolicy = kind
-			? ({
-					id: '',
-					user_id: null,
-					is_shared: false,
-					title: '',
-					body: '',
-					kind,
-					created_at: 0,
-					updated_at: 0
-				} as CoachPolicy)
-			: null;
+	function openCreate(kind: PolicyKind = 'flag') {
+		editorPolicy = null;
+		editorDefaultKind = kind;
 		editorOpen = true;
 	}
 
@@ -208,13 +199,10 @@
 	) {
 		if (!token) return;
 		const { id, title, body, kind } = e.detail;
-		// New-create path passes a synthetic empty id from openCreate(kind).
-		// Treat empty id as create-new.
-		const realId = id && id.length > 0 ? id : null;
 		saving = true;
 		try {
-			if (realId) {
-				const updated = await api.updateCoachPolicy(token, realId, {
+			if (id) {
+				const updated = await api.updateCoachPolicy(token, id, {
 					title,
 					body,
 					kind
@@ -230,6 +218,10 @@
 					kind
 				});
 				coachPolicies.update((ps) => [created, ...ps]);
+				// Switch into edit mode for the just-created policy so the
+				// title flips from "New policy" → "Edit policy" and the
+				// button from "Create" → "Save" — the form now reflects
+				// that the user is iterating on a real, persisted row.
 				editorPolicy = created;
 			}
 			toast.success(`Saved "${title}"`);
@@ -524,6 +516,7 @@
 				>
 					<PolicyEditorForm
 						policy={editorPolicy}
+						defaultKind={editorDefaultKind}
 						{saving}
 						on:save={onSave}
 						on:cancel={closeEditor}
@@ -541,7 +534,7 @@
 						type="button"
 						class="text-xs px-2.5 py-1 rounded-md bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50"
 						disabled={!enabled}
-						on:click={() => openCreate(null)}
+						on:click={() => openCreate('flag')}
 					>
 						+ New policy
 					</button>

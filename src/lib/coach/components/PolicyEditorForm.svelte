@@ -16,22 +16,30 @@
 	// Compact: rail/modal use case. Roomy: dedicated /coach page.
 	export let compact = false;
 	export let saving = false;
+	// When creating a new policy from a kind-specific entrypoint (e.g.
+	// the /coach demo card's "+ Author one" button), pre-select the kind
+	// without pretending the policy exists. Ignored on edit.
+	export let defaultKind: PolicyKind = 'flag';
+
+	$: isNew = policy === null;
 
 	let title = policy?.title ?? '';
 	let body = policy?.body ?? '';
-	// Default to 'flag' for new policies — least-surprising / least-invasive
-	// kind. The user picks deliberately if they want block or intervene.
-	let kind: PolicyKind = (policy?.kind as PolicyKind) ?? 'flag';
+	// Default kind for new policies = caller-supplied or 'flag' (least-
+	// surprising / least-invasive). Edit kind = the policy's own kind.
+	let kind: PolicyKind = (policy?.kind as PolicyKind) ?? defaultKind;
 
 	// Re-seed when the parent swaps the policy (e.g. user edits a different
 	// one). Tracks identity, not deep equality, so in-progress edits to the
-	// SAME policy aren't clobbered by store updates.
+	// SAME policy aren't clobbered by store updates. ``defaultKind`` is
+	// captured into ``kind`` only at re-seed time; later changes to the
+	// prop don't clobber a user's in-progress kind selection.
 	let lastPolicyId: string | null | undefined;
 	$: if ((policy?.id ?? null) !== lastPolicyId) {
 		lastPolicyId = policy?.id ?? null;
 		title = policy?.title ?? '';
 		body = policy?.body ?? '';
-		kind = (policy?.kind as PolicyKind) ?? 'flag';
+		kind = (policy?.kind as PolicyKind) ?? defaultKind;
 	}
 
 	const dispatch = createEventDispatcher<{
@@ -54,7 +62,7 @@
 
 <div class="flex flex-col gap-3 {compact ? '' : 'h-full'}">
 	<div class="text-base font-medium text-gray-800 dark:text-gray-100">
-		{policy ? 'Edit policy' : 'New policy'}
+		{isNew ? 'New policy' : 'Edit policy'}
 	</div>
 
 	<!-- Kind picker: three radio cards laid out as a single row.
@@ -151,7 +159,7 @@
 			class="px-3 py-1.5 text-sm rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
 			on:click={save}
 		>
-			{saving ? 'Saving…' : policy ? 'Save' : 'Create'}
+			{saving ? 'Saving…' : isNew ? 'Create' : 'Save'}
 		</button>
 	</div>
 </div>
