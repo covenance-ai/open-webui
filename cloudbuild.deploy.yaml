@@ -1,0 +1,82 @@
+# Cloud Build pipeline used by the `our-webui-prod-deploy` trigger
+# (push to ^main$ on github.com/covenance-ai/open-webui).
+#
+# Builds the fork's Docker image and rolls it out to the existing
+# `our-webui` Cloud Run service. The service's env vars, secrets, Cloud
+# SQL connection, and bucket mounts are NOT touched here — they are
+# managed by `../deploy.sh` and only need to be re-applied when those
+# specifically change. `gcloud run services update --image=...`
+# preserves the rest of the service spec.
+#
+# Trade-off: changes to env vars / secrets / mounts in deploy.sh require
+# a manual `./deploy.sh` run; image-only changes (the common case) ship
+# automatically on push to main.
+
+steps:
+  - id: Write-Build-SHA
+    # svelte.config.js reads .build-sha to set the SvelteKit version,
+    # which drives /_app/version.json. Without this, the in-image build
+    # has no .git dir and falls back to package.json's static version,
+    # so the client-side updated.current reload mechanic never fires
+    # between deploys.
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - 'printf "%s" "$SHORT_SHA" > .build-sha'
+
+  - id: Pull-Cache
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - docker pull europe-west1-docker.pkg.dev/covenance-469421/our-webui/our-webui:latest || true
+
+  - id: Build
+    name: gcr.io/cloud-builders/docker
+    env:
+      # Required for $BUILDPLATFORM in upstream's Dockerfile.
+      - DOCKER_BUILDKIT=1
+    args:
+      - build
+      - -t
+      - europe-west1-docker.pkg.dev/covenance-469421/our-webui/our-webui:$COMMIT_SHA
+      - -t
+      - europe-west1-docker.pkg.dev/covenance-469421/our-webui/our-webui:latest
+      - --cache-from
+      - europe-west1-docker.pkg.dev/covenance-469421/our-webui/our-webui:latest
+      - .
+
+  - id: Push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - europe-west1-docker.pkg.dev/covenance-469421/our-webui/our-webui
+
+  - id: Deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - services
+      - update
+      - our-webui
+      - --platform=managed
+      - --image=europe-west1-docker.pkg.dev/covenance-469421/our-webui/our-webui:$COMMIT_SHA
+      - --region=europe-west1
+      - --labels=managed-by=gcp-cloud-build-deploy-cloud-run,commit-sha=$COMMIT_SHA,gcb-build-id=$BUILD_ID
+      - --quiet
+
+images:
+  - europe-west1-docker.pkg.dev/covenance-469421/our-webui/our-webui:$COMMIT_SHA
+  - europe-west1-docker.pkg.dev/covenance-469421/our-webui/our-webui:latest
+
+options:
+  # E2_HIGHCPU_8 OOMs on the SvelteKit/pyodide vite build (~8 GB JS heap
+  # required). E2_HIGHCPU_32 is the right size; the default GLOBAL Cloud
+  # Build region has the quota.
+  machineType: E2_HIGHCPU_32
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1800s

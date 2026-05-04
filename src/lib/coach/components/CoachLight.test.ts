@@ -14,7 +14,12 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { render } from 'svelte/server';
+
+import { coachConfig } from '../stores/config';
+import { coachUIVariant } from '../stores/ui';
+import CoachLight from './CoachLight.svelte';
 
 const COACH_DIR = new URL('..', import.meta.url).pathname; // src/lib/coach/
 
@@ -43,6 +48,26 @@ function filesMutatingVariant(): string[] {
 	return hits;
 }
 
+const SAMPLE_CFG = {
+	user_id: 'u1',
+	enabled: true,
+	access_enabled: true,
+	demo_mode: false,
+	coach_model_id: 'm',
+	active_policy_ids: ['p1'],
+	created_at: 0,
+	updated_at: 0
+};
+
+beforeEach(() => {
+	coachConfig.set(null as never);
+	coachUIVariant.set('theater');
+});
+
+afterEach(() => {
+	coachUIVariant.set('rail');
+});
+
 describe('coach UI variant escape hatch', () => {
 	it('is reachable from outside the rail variant', () => {
 		const hits = filesMutatingVariant();
@@ -50,5 +75,16 @@ describe('coach UI variant escape hatch', () => {
 		// At least one mutation site must live outside ui/rail/, otherwise
 		// switching away from rail strands the user with no picker.
 		expect(outsideRail.length).toBeGreaterThan(0);
+	});
+
+	it('CoachLight SSR-renders without crashing in non-rail variants', () => {
+		// Catches the render-time-crash class that the e2e chat test
+		// catches at runtime — but cheap, so it runs on every CI.
+		coachConfig.set(SAMPLE_CFG);
+		for (const variant of ['chips', 'theater'] as const) {
+			coachUIVariant.set(variant);
+			const body = render(CoachLight, { props: {} }).body;
+			expect(body).toContain('data-coach-light');
+		}
 	});
 });
