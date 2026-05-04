@@ -325,6 +325,16 @@
 				</span>
 			</label>
 
+			<!-- Link to full-page workbench. The rail stays the "short
+			     view" for at-a-glance toggles; serious policy authoring
+			     happens at /coach where the textarea has room to breathe. -->
+			<a
+				href="/coach"
+				class="self-start text-xs text-emerald-600 dark:text-emerald-400 hover:underline"
+			>
+				Open full coach page →
+			</a>
+
 			<!-- Shared policies -->
 			{#if $sharedPolicies.length > 0}
 				<div>
