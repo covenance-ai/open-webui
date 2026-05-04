@@ -703,7 +703,11 @@
 	const onCoachFollowup = (e: Event) => {
 		const text = (e as CustomEvent)?.detail?.text;
 		if (typeof text === 'string' && text.length > 0) {
-			submitPrompt(text);
+			// Flag the message so loop protection in the next coach
+			// evaluation can recognise it and downgrade further followups
+			// to flags — otherwise an unhappy LLM + sticky policy could
+			// chain corrections indefinitely.
+			submitPrompt(text, [], { coachAuthored: true });
 		}
 	};
 	onDestroy(() => {
@@ -1863,7 +1867,11 @@
 	// Chat functions
 	//////////////////////////
 
-	const submitPrompt = async (inputContent, inputFiles, opts: { skipSend?: boolean } = {}) => {
+	const submitPrompt = async (
+		inputContent,
+		inputFiles,
+		opts: { skipSend?: boolean; coachAuthored?: boolean } = {}
+	) => {
 		const _files = structuredClone(inputFiles);
 
 		chatFiles.push(
@@ -1880,7 +1888,7 @@
 
 		// Create user message
 		let userMessageId = uuidv4();
-		let userMessage = {
+		let userMessage: Record<string, unknown> = {
 			id: userMessageId,
 			parentId: history.currentId ?? null,
 			childrenIds: [],
@@ -1890,6 +1898,15 @@
 			timestamp: Math.floor(Date.now() / 1000), // Unix epoch
 			models: selectedModels
 		};
+		// [coach] coach-authored follow-ups need to be flagged here, not
+		// only on the wire — the next coach evaluation reads this field
+		// to enforce the "no chained auto-corrections" loop guard. Both
+		// camelCase and snake_case are set; the conversation snapshotter
+		// in coach/init.ts accepts either.
+		if (opts.coachAuthored) {
+			userMessage.coachAuthored = true;
+			userMessage.coach_authored = true;
+		}
 
 		// Add message to history and Set currentId to messageId
 		history.messages[userMessageId] = userMessage;
