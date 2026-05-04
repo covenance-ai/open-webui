@@ -162,6 +162,11 @@
 							<div class="text-[10px] uppercase tracking-wide opacity-70 mb-0.5">
 								Coach (auto-sent on your behalf)
 							</div>
+							{#if step.policyTitle}
+								<div class="text-[10px] text-gray-500 dark:text-gray-400 italic mb-0.5">
+									Policy: {step.policyTitle}
+								</div>
+							{/if}
 							<div class="text-gray-800 dark:text-gray-100">{step.text}</div>
 						</div>
 					</li>

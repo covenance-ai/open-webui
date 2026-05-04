@@ -55,12 +55,10 @@
 	// red block banner, amber flag chip, sky-coloured intervene reply.
 	const DEMO_SCRIPTS: Record<PolicyKind, DemoStep[]> = {
 		block: [
-			{ role: 'system', text: 'pre-flight (before the LLM sees the message)' },
+			{ role: 'system', text: 'pre-flight · before the LLM sees the message' },
 			{
 				role: 'user',
-				text:
-					"Here are three candidates' résumés — who should I hire for " +
-					'the senior engineer role?'
+				text: 'Which of these 3 candidates should I hire?'
 			},
 			{ role: 'coach', variant: 'reviewing', transient: true },
 			{
@@ -68,66 +66,61 @@
 				variant: 'block',
 				policyTitle: 'No LLM for hiring decisions',
 				text:
-					'This request appears to involve using an LLM for hiring ' +
-					'decisions, which your coach policy forbids. Please handle ' +
-					'candidate evaluation outside of this assistant.'
+					'LLM-based hiring decisions are off-limits — the EU AI Act ' +
+					'(Annex III §4) classifies recruitment as a high-risk use ' +
+					'case. Take this to a human reviewer.'
 			},
 			{ role: 'system', text: 'the LLM was never called' }
 		],
 		flag: [
-			{ role: 'system', text: 'post-flight (after the LLM replies)' },
-			{
-				role: 'user',
-				text: 'When did Einstein win the Nobel Prize, and what for?'
-			},
+			{ role: 'system', text: 'post-flight · after the LLM replies' },
+			{ role: 'user', text: 'When did GDPR come into force?' },
 			{ role: 'assistant', variant: 'thinking', transient: true },
 			{
 				role: 'assistant',
-				text:
-					'Einstein won the Nobel Prize in Physics in 1921 for his ' +
-					'theory of general relativity.'
+				text: 'GDPR came into force in 2016.'
 			},
 			{ role: 'coach', variant: 'reviewing', transient: true },
 			{
 				role: 'coach',
 				variant: 'flag',
-				policyTitle: 'Fact-check confident claims about people',
+				policyTitle: 'Catch confident factual errors',
 				text:
-					'Half wrong with confidence: Einstein won the 1921 Physics ' +
-					'Nobel for the photoelectric effect, not relativity. The ' +
-					'committee considered relativity too theoretical at the time.'
+					'Half-right: GDPR was adopted in April 2016 but only became ' +
+					"applicable on 25 May 2018 — the two-year gap was the " +
+					'implementation period. The reply conflates the two.'
 			}
 		],
 		intervene: [
-			{ role: 'system', text: 'post-flight (after the LLM replies)' },
+			{ role: 'system', text: 'post-flight · after the LLM replies' },
 			{
 				role: 'user',
-				text: 'Explain how rate limiting protects an API.'
+				text: 'Write a polite email asking for a 1-week deadline extension.'
 			},
 			{ role: 'assistant', variant: 'thinking', transient: true },
 			{
 				role: 'assistant',
-				text:
-					'Rate limiting restricts how often clients can call an API in a ' +
-					'time window, preventing overload and abuse.'
+				text: 'Hi, can you extend my deadline by a week? Thanks.'
 			},
 			{ role: 'coach', variant: 'reviewing', transient: true },
 			{
 				role: 'coach',
 				variant: 'intervene',
+				policyTitle: 'Email drafts: include a reason and acknowledge impact',
 				text:
-					'Please add one concrete example of a rate-limit policy (e.g. ' +
-					'"100 req/min per IP") and one concrete failure mode it ' +
-					'prevents — the answer is too abstract to be useful.'
+					'Too terse for a polite request — please rewrite with a brief ' +
+					"reason for the extension and an acknowledgment of impact on " +
+					'the recipient.'
 			},
 			{ role: 'assistant', variant: 'thinking', transient: true },
 			{
 				role: 'assistant',
 				text:
-					'Concrete example: 100 requests / minute per IP, returning HTTP ' +
-					"429 over the limit.\n\nWithout it: a single misbehaving client " +
-					'can saturate worker pools and DOS legitimate traffic — even ' +
-					'unintentionally, e.g. a retry loop after a transient 500.'
+					"Hi,\n\nI'd like to request a one-week extension on the " +
+					'deadline so I can polish the work to the standard we ' +
+					'discussed. I realise this may affect downstream timing — ' +
+					"happy to discuss if that's tight on your end.\n\n" +
+					'Thanks for considering it.'
 			}
 		]
 	};
