@@ -10,7 +10,7 @@
 	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 
-	import { models, user } from '$lib/stores';
+	import { models, showSidebar, user } from '$lib/stores';
 	import * as api from '$lib/coach/api';
 	import { coachConfig } from '$lib/coach/stores/config';
 	import {
@@ -319,7 +319,18 @@
 	<title>Coach · Settings & Policies</title>
 </svelte:head>
 
-<div class="flex flex-col h-full overflow-hidden">
+<!--
+	The outer wrapper follows the upstream chat-sidebar convention used by
+	/admin, /workspace, /home, etc.: when the sidebar is open we shrink to
+	100% - sidebar-width; when collapsed we leave 49px for the icon rail.
+	Without this the chat sidebar opens *over* the /coach content (since
+	the layout's <slot /> has no shrink class of its own).
+-->
+<div
+	class="flex flex-col h-screen max-h-[100dvh] flex-1 overflow-hidden transition-width duration-200 ease-in-out {$showSidebar
+		? 'md:max-w-[calc(100%-var(--sidebar-width))]'
+		: 'md:max-w-[calc(100%-49px)]'} w-full max-w-full"
+>
 	<!-- Page header -->
 	<header
 		class="flex items-center justify-between px-6 py-3 border-b border-gray-200 dark:border-gray-800"
