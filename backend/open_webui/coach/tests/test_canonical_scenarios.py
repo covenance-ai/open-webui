@@ -59,13 +59,23 @@ HIRING_POLICY_BODY = (
 )
 
 
-def _seed_hiring_policy(user_id='u1'):
+def _seed_hiring_policy(user_id='u1', kind='flag'):
+    """Seed the test fixture policy with the given kind.
+
+    ``kind`` decides which phase + action the policy can produce — see
+    coach.models.CoachPolicy. Tests pick the kind that matches the
+    action they're asserting on; defaulting to 'flag' keeps post-flight
+    tests that don't care about the action (e.g. "returns none") working
+    without modification.
+    """
     from open_webui.coach.schemas import CoachConfigForm, CoachPolicyCreateForm
     from open_webui.coach.storage import CoachConfigs, CoachPolicies
 
     p = CoachPolicies.create_personal(
         user_id,
-        CoachPolicyCreateForm(title=HIRING_POLICY_TITLE, body=HIRING_POLICY_BODY),
+        CoachPolicyCreateForm(
+            title=HIRING_POLICY_TITLE, body=HIRING_POLICY_BODY, kind=kind
+        ),
     )
     CoachConfigs.upsert(
         user_id,
@@ -185,7 +195,9 @@ def test_5_post_followup():
     from open_webui.coach.schemas import ConversationTurn
     from open_webui.coach.service import evaluate
 
-    p = _seed_hiring_policy()
+    # The action must match the policy's kind; an 'intervene' policy is
+    # the only one that produces action=followup.
+    p = _seed_hiring_policy(kind='intervene')
 
     async def caller(_m, _msgs):
         return (
@@ -212,7 +224,7 @@ def test_6_post_loop_guard_downgrades_followup_to_flag():
     from open_webui.coach.schemas import ConversationTurn
     from open_webui.coach.service import evaluate
 
-    p = _seed_hiring_policy()
+    p = _seed_hiring_policy(kind='intervene')
 
     async def caller(_m, _msgs):
         return (
@@ -242,7 +254,8 @@ def test_7_pre_flight_blocks_hiring_query():
     from open_webui.coach.schemas import ConversationTurn
     from open_webui.coach.service import evaluate
 
-    p = _seed_hiring_policy()
+    # Pre-flight only runs kind=block policies.
+    p = _seed_hiring_policy(kind='block')
 
     async def caller(_m, _msgs):
         # Simulate a correctly-behaving coach LLM producing a block verdict.

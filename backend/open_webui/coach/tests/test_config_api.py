@@ -18,7 +18,9 @@ def test_get_autocreates_default(fresh_db):
     assert cfg.enabled is False
     assert cfg.coach_model_id is None
     # On a clean library we seed one default shared policy ("No LLM for hiring
-    # decisions") and pre-activate it so toggling coach on isn't a silent no-op.
+    # decisions") and pre-activate it so toggling coach on isn't a silent
+    # no-op. Demo seed policies (one per kind) are also created but are
+    # left inactive — they're for the /coach demo cards, opt-in.
     assert len(cfg.active_policy_ids) == 1
     assert isinstance(cfg.created_at, int)
     assert cfg.created_at > 0
@@ -34,16 +36,24 @@ def test_get_autocreates_picks_up_env_default_model(fresh_db, monkeypatch):
 
 
 def test_default_seed_is_idempotent_across_users(fresh_db):
-    """Two new users share the same seeded policy, not duplicates."""
+    """Two new users share the same seeded policies, not duplicates.
+
+    Shared library after seeding contains 1 canonical hiring policy +
+    3 demo policies (one per kind: block/flag/intervene). Only the
+    hiring one is auto-activated for fresh users.
+    """
     from open_webui.coach.storage import CoachConfigs, CoachPolicies
 
     cfg1 = CoachConfigs.get_or_default('u-a')
     cfg2 = CoachConfigs.get_or_default('u-b')
 
-    # Both users land on the same seeded policy id.
+    # Both users get the same single auto-active policy (hiring).
     assert cfg1.active_policy_ids == cfg2.active_policy_ids
+    assert len(cfg1.active_policy_ids) == 1
     shared = [p for p in CoachPolicies.list_visible('u-a') if p.is_shared]
-    assert len(shared) == 1
+    assert len(shared) == 4  # 1 canonical + 3 demo seeds, deduped across users
+    kinds = sorted(p.kind for p in shared)
+    assert kinds == ['block', 'block', 'flag', 'intervene']
 
 
 def test_get_is_idempotent(fresh_db):

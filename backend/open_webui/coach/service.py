@@ -54,9 +54,42 @@ _POST_ACTIONS = {'none', 'flag', 'followup'}
 _PRE_ACTIONS = {'none', 'block'}
 _VALID_SEVERITIES = {'info', 'warn', 'critical', None}
 
+# Maps the user-facing CoachPolicy.kind to the action verb the coach
+# emits when that policy fires. ``intervene`` is the user-facing name;
+# ``followup`` is the legacy action name kept on the wire to avoid a
+# data migration of historical CoachEvent rows.
+_KIND_TO_ACTION = {
+    'block': 'block',
+    'flag': 'flag',
+    'intervene': 'followup',
+}
+
 
 def _valid_actions_for_phase(phase: str) -> set[str]:
     return _PRE_ACTIONS if phase == 'pre' else _POST_ACTIONS
+
+
+def _kinds_for_phase(phase: str) -> set[str]:
+    """Which policy kinds run in each phase.
+
+    Pre-flight runs only ``block`` policies (they're the only ones that
+    can refuse a message before the LLM sees it). Post-flight runs the
+    other two (``flag`` annotates, ``intervene`` self-corrects).
+    """
+    return {'block'} if phase == 'pre' else {'flag', 'intervene'}
+
+
+def filter_policies_for_phase(
+    policies: list[CoachPolicyResponse], phase: str
+) -> list[CoachPolicyResponse]:
+    """Drop policies whose kind doesn't apply in this phase.
+
+    Used by run_core to keep the LLM prompt focused — pre-flight should
+    not see flag/intervene policies, post-flight should not see block
+    policies.
+    """
+    keep = _kinds_for_phase(phase)
+    return [p for p in policies if getattr(p, 'kind', 'flag') in keep]
 
 
 @dataclass
@@ -112,6 +145,66 @@ def _loop_protection_violated(conversation: list[ConversationTurn]) -> bool:
         if t.role == 'user':
             return t.coach_authored
     return False
+
+
+def _coerce_action_to_kind(
+    verdict: EvaluateResponse, policies: list[CoachPolicyResponse]
+) -> EvaluateResponse:
+    """Force the verdict's action to match the cited policy's kind.
+
+    The LLM is told what to emit but can still drift — return action=flag
+    when the matching policy is kind=intervene, etc. We resolve in favour
+    of the policy's kind so the user-facing semantics stay stable: a
+    policy that's tagged as a "flagger" never silently auto-corrects.
+
+    No-op when action=none (nothing to coerce) or when the verdict cites
+    no policy.
+    """
+    if verdict.action == 'none':
+        return verdict
+    if not verdict.policy_id:
+        return verdict
+    by_id = {p.id: p for p in policies}
+    cited = by_id.get(verdict.policy_id)
+    if cited is None:
+        return verdict
+    expected = _KIND_TO_ACTION[getattr(cited, 'kind', 'flag')]
+    if verdict.action == expected:
+        return verdict
+    # Action mismatch. Rebuild the verdict in the right shape.
+    if expected == 'followup':
+        # Need followup_text. The model may not have produced one when
+        # it thought it was emitting a flag; synthesize a minimal one
+        # rather than dropping the verdict entirely.
+        ft = (
+            verdict.followup_text
+            or verdict.rationale
+            or 'Please revise your previous reply to address the policy concern.'
+        )
+        return EvaluateResponse(
+            action='followup',
+            policy_id=verdict.policy_id,
+            severity=verdict.severity,
+            rationale=verdict.rationale,
+            followup_text=ft,
+        )
+    if expected == 'flag':
+        return EvaluateResponse(
+            action='flag',
+            policy_id=verdict.policy_id,
+            severity=verdict.severity or 'warn',
+            rationale=verdict.rationale or 'Coach: policy concern.',
+            followup_text=None,
+        )
+    if expected == 'block':
+        return EvaluateResponse(
+            action='block',
+            policy_id=verdict.policy_id,
+            severity=verdict.severity or 'critical',
+            rationale=verdict.rationale or 'Coach: blocked by policy.',
+            followup_text=None,
+        )
+    return verdict
 
 
 def parse_verdict(
@@ -196,6 +289,23 @@ def _next_demo_index(user_id: str) -> int:
         return n
 
 
+def _first_policy_id_of_kind(
+    policies: Optional[list[CoachPolicyResponse]], kind: str
+) -> Optional[str]:
+    """Return the id of the first active policy with the given kind, or None.
+
+    Used by demo mode to cite a kind-appropriate policy in the verdict
+    (so the frontend renders the matching seed policy's title/body
+    instead of a generic placeholder).
+    """
+    if not policies:
+        return None
+    for p in policies:
+        if getattr(p, 'kind', 'flag') == kind:
+            return p.id
+    return None
+
+
 _POST_DEMO_ROTATION = (
     EvaluateResponse(
         action='flag',
@@ -262,7 +372,8 @@ def _scripted_verdict(
     if 'demo:none' in text:
         return EvaluateResponse(action='none')
 
-    first_policy_id = policies[0].id if policies else None
+    block_id = _first_policy_id_of_kind(policies, 'block')
+    flag_id = _first_policy_id_of_kind(policies, 'flag')
 
     if phase == 'pre':
         triggered = 'demo:block' in text or any(k in text for k in _HIRING_KEYWORDS)
@@ -270,7 +381,7 @@ def _scripted_verdict(
             return EvaluateResponse(
                 action='block',
                 severity='critical',
-                policy_id=first_policy_id,
+                policy_id=block_id,
                 rationale=(
                     'This request appears to involve using an LLM for hiring '
                     'decisions, which your coach policy forbids. Please handle '
@@ -284,17 +395,20 @@ def _scripted_verdict(
         return EvaluateResponse(
             action='flag',
             severity='critical',
+            policy_id=flag_id,
             rationale='Demo critical flag: simulating a high-severity policy hit.',
         )
     if 'demo:flag' in text:
         return EvaluateResponse(
             action='flag',
             severity='warn',
+            policy_id=flag_id,
             rationale='Demo flag: simulating a policy hit.',
         )
-    if 'demo:followup' in text:
+    if 'demo:followup' in text or 'demo:intervene' in text:
         return EvaluateResponse(
             action='followup',
+            policy_id=_first_policy_id_of_kind(policies, 'intervene'),
             followup_text='(demo) please add one concrete example to your answer.',
         )
 
@@ -365,6 +479,11 @@ async def run_core(
         trace.skip_reason = 'disabled'
         return emit(_noop())
 
+    # Filter to the policies whose kind applies in this phase. The
+    # snapshot reflects what was *actually* considered, not the full
+    # active list, so the activity-log detail view doesn't lie.
+    policies = filter_policies_for_phase(policies, phase)
+
     # Demo mode short-circuits the LLM; policies + model are not required.
     if demo_mode:
         trace.active_policies = _policies_snapshot(policies)
@@ -407,6 +526,7 @@ async def run_core(
 
     trace.raw_reply = reply or ''
     verdict = parse_verdict(reply or '', {p.id for p in policies}, phase=phase)
+    verdict = _coerce_action_to_kind(verdict, policies)
 
     # Loop protection (post only): never chain a followup on top of a
     # coach-authored user turn. Pre-flight doesn't produce followups so

@@ -145,11 +145,13 @@ def test_parse_never_raises_on_arbitrary_strings(raw):
 # ── end-to-end evaluate() with mocked LLM ──────────────────────────
 
 
-def _enable_coach_with_policy(title='rule', body='do not do bad things'):
+def _enable_coach_with_policy(title='rule', body='do not do bad things', kind='flag'):
     from open_webui.coach.schemas import CoachConfigForm, CoachPolicyCreateForm
     from open_webui.coach.storage import CoachConfigs, CoachPolicies
 
-    p = CoachPolicies.create_personal('u1', CoachPolicyCreateForm(title=title, body=body))
+    p = CoachPolicies.create_personal(
+        'u1', CoachPolicyCreateForm(title=title, body=body, kind=kind)
+    )
     CoachConfigs.upsert(
         'u1',
         CoachConfigForm(enabled=True, coach_model_id='mock-model', active_policy_ids=[p.id]),
@@ -304,7 +306,7 @@ def test_evaluate_followup_allowed_when_no_coach_chain():
     from open_webui.coach.schemas import ConversationTurn
     from open_webui.coach.service import evaluate
 
-    p = _enable_coach_with_policy()
+    p = _enable_coach_with_policy(kind='intervene')
 
     async def caller(_m, _msgs):
         return (

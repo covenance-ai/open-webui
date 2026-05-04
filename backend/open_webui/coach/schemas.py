@@ -54,12 +54,29 @@ class CoachAdminUserAccessForm(BaseModel):
     access_enabled: bool
 
 
+# Per-policy kind — see CoachPolicy.kind docstring in models.py for what
+# each value means. Reused by every policy schema below to keep the
+# allowed values defined in exactly one place.
+PolicyKind = str  # narrowed by ``valid_policy_kind`` below
+VALID_POLICY_KINDS = ('block', 'flag', 'intervene')
+
+
+def valid_policy_kind(v: str) -> str:
+    if v not in VALID_POLICY_KINDS:
+        raise ValueError(
+            f'kind must be one of {VALID_POLICY_KINDS}, got {v!r}'
+        )
+    return v
+
+
 class CoachPolicyResponse(BaseModel):
     id: str
     user_id: Optional[str] = None
     is_shared: bool
     title: str
     body: str
+    # 'block' | 'flag' | 'intervene' — see models.py CoachPolicy docstring.
+    kind: str = 'flag'
     # Optional hyperlink shown to the user when a block/flag banner
     # renders — for a full explanation (Wikipedia article, regulation,
     # internal wiki, ...).
@@ -73,13 +90,22 @@ class CoachPolicyResponse(BaseModel):
 class CoachPolicyCreateForm(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     body: str = Field(min_length=1, max_length=5000)
+    kind: str = Field(default='flag')
     explanation_url: Optional[str] = Field(default=None, max_length=2000)
+
+    def model_post_init(self, _ctx) -> None:
+        valid_policy_kind(self.kind)
 
 
 class CoachPolicyUpdateForm(BaseModel):
     title: Optional[str] = Field(default=None, min_length=1, max_length=200)
     body: Optional[str] = Field(default=None, min_length=1, max_length=5000)
+    kind: Optional[str] = Field(default=None)
     explanation_url: Optional[str] = Field(default=None, max_length=2000)
+
+    def model_post_init(self, _ctx) -> None:
+        if self.kind is not None:
+            valid_policy_kind(self.kind)
 
 
 # ─── Evaluate ──────────────────────────────────────────────────────────
@@ -122,6 +148,7 @@ class CoachPolicySnapshot(BaseModel):
     id: str
     title: str
     body: str
+    kind: str = 'flag'
     is_shared: bool = False
 
 

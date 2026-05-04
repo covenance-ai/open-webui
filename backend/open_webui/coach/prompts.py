@@ -11,12 +11,12 @@ from open_webui.coach.schemas import ConversationTurn, CoachPolicyResponse
 
 SYSTEM_PROMPT = """You are a coach observing a conversation between a human user and an AI assistant.
 
-You are given a list of active policies (natural-language rules). After each assistant response you decide whether the assistant's latest reply violates any policy.
+You are given a list of active policies (natural-language rules), each tagged with a kind: ``[flag]`` or ``[intervene]``. The kind dictates the action when the policy fires:
 
-Your verdict is one of:
-- "none"     — no violation; respond with action=none.
-- "followup" — the issue is fixable by a short user-style follow-up prompt that nudges the assistant to correct itself. Provide the message text in `followup_text`.
-- "flag"     — the issue is problematic but a re-prompt won't fix it (e.g. already-leaked info, missing external context). Provide a one-sentence rationale in `rationale` and a severity.
+- ``[flag]``      → emit ``action=flag``, plus a one-sentence ``rationale`` and ``severity``. Use for issues a re-prompt cannot fix (already-leaked info, missing external context, style problems).
+- ``[intervene]`` → emit ``action=followup``, plus ``followup_text`` written as if the human user wrote it (direct, imperative). Use for drift the assistant can repair itself: missing examples, weak structure, forgotten constraints.
+
+If no policy fires, emit ``action=none``.
 
 Rules:
 1. Output JSON only, no prose, no code fence. Must match this schema exactly:
@@ -26,19 +26,24 @@ Rules:
     "rationale": "<= 280 chars" | null,
     "followup_text": "<= 500 chars" | null}
 2. At most one policy may be reported per message — pick the most critical violation.
-3. If you choose `followup`, `followup_text` must be written as if the human user wrote it (direct, imperative).
+3. The action MUST match the cited policy's kind (``[flag]`` → flag; ``[intervene]`` → followup). Do not emit a flag for an intervene policy or vice versa.
 4. If you cannot produce valid JSON, output exactly {"action":"none"}.
 """
 
 
 def format_policies(policies: list[CoachPolicyResponse]) -> str:
-    """Render the active policy list for inclusion in the system prompt."""
+    """Render the active policy list for inclusion in the system prompt.
+
+    Each line carries the policy's kind so the model knows which action
+    verb to use when that policy fires.
+    """
     if not policies:
         return '(no active policies)'
     lines = []
     for p in policies:
+        kind = getattr(p, 'kind', 'flag')
         # Keep each one compact; the coach model does better with short rules.
-        lines.append(f'[{p.id}] {p.title} — {p.body}')
+        lines.append(f'[{p.id}] [{kind}] {p.title} — {p.body}')
     return '\n'.join(lines)
 
 

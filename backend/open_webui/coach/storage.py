@@ -59,30 +59,113 @@ DEFAULT_HIRING_POLICY_EXPLANATION_URL = (
     'https://en.wikipedia.org/wiki/Artificial_Intelligence_Act'
 )
 
+# Demo seed policies — one of each kind. Triggered by demo:* keywords
+# (see coach.service._scripted_verdict). These give the /coach page's
+# "Try it" buttons something concrete to point at: the buttons send
+# synthetic messages containing these keywords, and the seeded policies
+# are the ones cited by the resulting verdict.
+DEMO_SHARED_POLICIES = [
+    {
+        'title': 'Demo · always BLOCK on demo:block',
+        'body': (
+            "Demo policy. If the user's pending message contains the "
+            'literal token ``demo:block``, refuse to send the message — '
+            "this is a hard refusal, not a warning. The user's request "
+            'never reaches the LLM.\n\n'
+            "Use this policy to demonstrate the coach's pre-flight gate. "
+            'Real-world block policies look like the bundled "No LLM for '
+            'hiring decisions" rule.'
+        ),
+        'kind': 'block',
+    },
+    {
+        'title': 'Demo · always FLAG on demo:flag',
+        'body': (
+            'Demo policy. If the user message that produced the latest '
+            'assistant reply contains the token ``demo:flag``, attach a '
+            "non-blocking warning to the assistant's reply. The reply is "
+            'shown in full; only an annotation is added.\n\n'
+            "Use this policy to demonstrate the coach's post-flight "
+            'flagging. Real flag policies are for soft concerns the user '
+            'can address — citation gaps, hedging, off-topic tangents.'
+        ),
+        'kind': 'flag',
+    },
+    {
+        'title': 'Demo · always INTERVENE on demo:intervene',
+        'body': (
+            'Demo policy. If the user message that produced the latest '
+            'assistant reply contains the token ``demo:intervene`` (or '
+            'the legacy alias ``demo:followup``), the coach sends a '
+            "follow-up prompt asking the LLM to fix its reply — the "
+            'follow-up appears as if the user typed it, and the LLM '
+            'responds again.\n\n'
+            "Use this policy to demonstrate the coach's auto-correction. "
+            "Real intervene policies are for drift the bot can repair "
+            'itself: missing examples, weak structure, forgotten '
+            'constraints.'
+        ),
+        'kind': 'intervene',
+    },
+]
+
+
+def _seed_shared_policy_if_missing(
+    db: Session,
+    *,
+    title: str,
+    body: str,
+    kind: str,
+    explanation_url: Optional[str] = None,
+) -> CoachPolicy:
+    """Insert a shared policy iff no shared policy with that title exists.
+
+    Idempotent — safe to call on every container restart. Returns the
+    matched-or-created row.
+    """
+    existing = (
+        db.query(CoachPolicy)
+        .filter(CoachPolicy.is_shared.is_(True), CoachPolicy.title == title)
+        .first()
+    )
+    if existing is not None:
+        return existing
+    now = int(time.time())
+    row = CoachPolicy(
+        id=str(uuid.uuid4()),
+        user_id=None,
+        is_shared=True,
+        title=title,
+        body=body,
+        kind=kind,
+        explanation_url=explanation_url,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
 
 def _ensure_default_shared_policies(db: Session) -> list[str]:
-    """If zero shared policies exist, seed the canonical hiring policy.
+    """Idempotently seed the canonical + demo shared policies.
 
-    Returns the ids of all currently-shared policies (so the caller can
-    pre-activate them in a fresh user's config).
+    Returns ids of the policies a brand-new user should have *active*
+    by default — just the canonical hiring policy. The three demo seeds
+    are visible in the user's "Shared" list but stay inactive until the
+    user opts in (otherwise every fresh account would auto-fire on demo
+    keywords, which is noise we don't want by default).
     """
-    shared = db.query(CoachPolicy).filter(CoachPolicy.is_shared.is_(True)).all()
-    if not shared:
-        now = int(time.time())
-        seed = CoachPolicy(
-            id=str(uuid.uuid4()),
-            user_id=None,
-            is_shared=True,
-            title=DEFAULT_HIRING_POLICY_TITLE,
-            body=DEFAULT_HIRING_POLICY_BODY,
-            explanation_url=DEFAULT_HIRING_POLICY_EXPLANATION_URL,
-            created_at=now,
-            updated_at=now,
-        )
-        db.add(seed)
-        db.flush()  # so seed.id is queryable in the same transaction
-        shared = [seed]
-    return [p.id for p in shared]
+    hiring = _seed_shared_policy_if_missing(
+        db,
+        title=DEFAULT_HIRING_POLICY_TITLE,
+        body=DEFAULT_HIRING_POLICY_BODY,
+        kind='block',
+        explanation_url=DEFAULT_HIRING_POLICY_EXPLANATION_URL,
+    )
+    for spec in DEMO_SHARED_POLICIES:
+        _seed_shared_policy_if_missing(db, **spec)
+    return [hiring.id]
 
 
 class CoachConfigTable:
@@ -252,6 +335,7 @@ class CoachPolicyTable:
                 is_shared=False,
                 title=form.title,
                 body=form.body,
+                kind=form.kind,
                 explanation_url=form.explanation_url,
                 created_at=now,
                 updated_at=now,
@@ -275,6 +359,8 @@ class CoachPolicyTable:
                 row.title = form.title
             if form.body is not None:
                 row.body = form.body
+            if form.kind is not None:
+                row.kind = form.kind
             if form.explanation_url is not None:
                 # Empty string ('') clears the URL; None in form leaves
                 # the existing value untouched (standard Update semantics).
