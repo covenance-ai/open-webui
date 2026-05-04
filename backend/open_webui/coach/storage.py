@@ -174,13 +174,20 @@ class CoachConfigTable:
     ) -> CoachConfigResponse:
         """Return this user's config, creating a default row if absent.
 
-        On creation we pre-seed `active_policy_ids` with all shared
-        policies (auto-creating a canonical hiring policy if the library
-        is empty) and pull `coach_model_id` from $COACH_DEFAULT_MODEL_ID.
-        Without this, "enable coach" alone is a silent no-op because
-        active_policy_ids is empty and the frontend gates on it.
+        On creation we pre-seed `active_policy_ids` with the canonical
+        hiring policy (auto-creating it if the library is empty) and
+        pull `coach_model_id` from $COACH_DEFAULT_MODEL_ID. Without
+        this, "enable coach" alone is a silent no-op.
+
+        Seed maintenance also runs on every call: if new shared seed
+        policies have been added in code (e.g. the demo policies for
+        block/flag/intervene) they appear in every user's "Shared" list
+        without a manual ops step. Idempotent, cheap.
         """
         with get_db_context(db) as db:
+            # Ensure all currently-defined seeds exist before reading the
+            # user row so we never serve a config with a stale shared set.
+            _ensure_default_shared_policies(db)
             row = db.query(CoachConfig).filter_by(user_id=user_id).first()
             if row is None:
                 now = int(time.time())

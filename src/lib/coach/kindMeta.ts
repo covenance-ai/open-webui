@@ -5,6 +5,18 @@
 
 import type { PolicyKind } from './types';
 
+// Step in a /coach demo simulation. Defined here (not in the
+// CoachDemoChat component) because Svelte 5 doesn't allow exporting
+// types from .svelte files. Used by /coach/+page.svelte to type the
+// DEMO_SCRIPTS table that's passed into CoachDemoChat as a prop.
+export interface DemoStep {
+	role: 'user' | 'assistant' | 'coach' | 'system';
+	variant?: 'typing' | 'thinking' | 'reviewing' | 'block' | 'flag' | 'intervene';
+	transient?: boolean;
+	text?: string;
+	policyTitle?: string;
+}
+
 export interface KindMeta {
 	kind: PolicyKind;
 	label: string; // Title-cased label
